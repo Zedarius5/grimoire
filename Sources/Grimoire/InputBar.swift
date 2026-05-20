@@ -3,8 +3,9 @@ import GrimoireKit
 
 struct InputBar: View {
     @ObservedObject var client: LichClient
-    let fontSize: Double
     let gameState: GameState
+
+    @Environment(\.fontSize) private var fontSize
 
     @State private var text: String = ""
     @State private var history: [String] = []
@@ -32,7 +33,6 @@ struct InputBar: View {
                     text: $text,
                     placeholder: isActive ? "Type a command..." : "Connect to Lich to send commands",
                     isEnabled: isActive,
-                    fontSize: fontSize,
                     foregroundColor: NSColor(GameTheme.foreground),
                     insertionPointColor: NSColor(GameTheme.foreground),
                     // Drop the `isActive` gate: we want the field to *try*

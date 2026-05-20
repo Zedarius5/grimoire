@@ -16,9 +16,10 @@ struct GrimoireApp: App {
         .defaultSize(width: 1100, height: 750)
         .commands {
             // "Debug" menu in the menu bar with utilities that aren't part
-            // of normal play — currently just the icon browser.
+            // of normal play — icon browser + wounds preview harness.
             CommandMenu("Debug") {
                 OpenIconBrowserMenuItem()
+                OpenWoundsDebugMenuItem()
             }
         }
 
@@ -38,6 +39,11 @@ struct GrimoireApp: App {
             IconBrowserView()
         }
         .defaultSize(width: 820, height: 620)
+
+        Window("Wounds Debug", id: "wounds-debug") {
+            WoundsDebugView()
+        }
+        .defaultSize(width: 720, height: 540)
     }
 }
 
@@ -52,5 +58,19 @@ private struct OpenIconBrowserMenuItem: View {
             openWindow(id: "icons")
         }
         .keyboardShortcut("i", modifiers: [.command, .option])
+    }
+}
+
+/// Menu-bar item that opens the Wounds Debug window. Use this while
+/// iterating on `BodyDiagram` visuals so you don't have to take damage
+/// in-game to see how each wound/scar rank renders.
+private struct OpenWoundsDebugMenuItem: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Wounds Debug") {
+            openWindow(id: "wounds-debug")
+        }
+        .keyboardShortcut("w", modifiers: [.command, .option])
     }
 }

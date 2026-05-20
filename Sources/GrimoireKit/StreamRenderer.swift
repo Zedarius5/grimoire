@@ -373,8 +373,10 @@ public final class StreamRenderer {
         case "prompt" where !selfClosing:
             promptDepth += 1
         case "compDef", "component",
-             "menuLink", "openDialog", "closeDialog",
-             "output":
+             "menuLink", "output":
+            // openDialog/closeDialog are deliberately NOT in this catch-all —
+            // their specific cases below carry side-effects (set dialog title,
+            // remove dialog) that the catch-all would mask by matching first.
             if !selfClosing { invisibleStack.append(name) }
 
         // Compass block — capture the `<dir>` children as the available exits.

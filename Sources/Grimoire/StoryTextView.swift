@@ -19,9 +19,10 @@ struct StoryTextView: NSViewRepresentable {
     /// lines arrived" signal, which works correctly even when the visible
     /// `lines.count` is pinned at the cap and stops changing.
     let revision: Int
-    let fontSize: Double
     let highlights: [Highlight]
     let onLinkClick: (URL) -> Void
+
+    @Environment(\.fontSize) private var fontSize
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -263,8 +264,21 @@ struct StoryTextView: NSViewRepresentable {
                 || Date().timeIntervalSince(lastUserScrollEndedAt) < 0.4
 
             if wasAtBottom && !userScrolledRecently {
+                // Diagnostic: capture the mutation-end timestamp and a
+                // snapshot of layout state so `scrollToBottom` can log
+                // (a) how long the async hop took and (b) whether the
+                // visible bottom was still un-laid-out at scroll-fire
+                // time. If the visible bottom is past
+                // `firstUnlaidCharacterIndex`, AppKit can draw the
+                // un-laid region as background (the suspected source of
+                // the "black for a second" flash).
+                let mutationCompletedAt = CFAbsoluteTimeGetCurrent()
+                let mutationLayout = captureLayoutState()
                 DispatchQueue.main.async { [weak self] in
-                    self?.scrollToBottom()
+                    self?.scrollToBottom(
+                        mutationCompletedAt: mutationCompletedAt,
+                        mutationLayout: mutationLayout
+                    )
                 }
             }
 
@@ -342,6 +356,45 @@ struct StoryTextView: NSViewRepresentable {
             )
         }
 
+        /// Snapshot of the layout manager's progress vs the storage and the
+        /// visible region. The "black for a second" hypothesis is that
+        /// `firstUnlaidCharacterIndex < visibleCharRange.upperBound` at the
+        /// moment AppKit draws — i.e. the visible bottom is past the layout
+        /// frontier, so glyphs aren't generated and the background is what
+        /// gets drawn.
+        struct LayoutState {
+            var storageLength: Int
+            var firstUnlaid: Int
+            var visibleCharStart: Int
+            var visibleCharEnd: Int
+
+            /// True when the bottom of the visible region extends past the
+            /// layout frontier — the suspected condition for the flash.
+            var visibleBottomUnlaid: Bool {
+                firstUnlaid < visibleCharEnd
+            }
+        }
+
+        private func captureLayoutState() -> LayoutState? {
+            guard let textView,
+                  let storage = textView.textStorage,
+                  let lm = textView.layoutManager,
+                  let container = textView.textContainer
+            else { return nil }
+            let visibleRect = textView.visibleRect
+            let visibleGlyphRange = lm.glyphRange(forBoundingRect: visibleRect, in: container)
+            let visibleCharRange = lm.characterRange(
+                forGlyphRange: visibleGlyphRange,
+                actualGlyphRange: nil
+            )
+            return LayoutState(
+                storageLength: storage.length,
+                firstUnlaid: lm.firstUnlaidCharacterIndex(),
+                visibleCharStart: visibleCharRange.location,
+                visibleCharEnd: visibleCharRange.location + visibleCharRange.length
+            )
+        }
+
         /// Logs scroll geometry whenever it's "interesting" — gap < 0 (the
         /// blank condition), or any change from the last logged state in
         /// the gap or docH dimensions worth recording. Pre-/post-reconcile
@@ -390,13 +443,57 @@ struct StoryTextView: NSViewRepresentable {
             })
         }
 
+        /// Plain entry point (no diagnostic context) — used by the
+        /// live-scroll observer's "release at bottom" path.
         private func scrollToBottom() {
+            scrollToBottom(mutationCompletedAt: nil, mutationLayout: nil)
+        }
+
+        private func scrollToBottom(
+            mutationCompletedAt: CFAbsoluteTime?,
+            mutationLayout: LayoutState?
+        ) {
             // `scrollRangeToVisible` is targeted — it only lays out enough
             // text to bring the end of the document on-screen, instead of
             // the entire textContainer. The previous `ensureLayout(for:)`
             // version stalled the main thread for >1s once the feed grew
             // past a few thousand lines.
             guard let textView, let storage = textView.textStorage else { return }
+
+            // Diagnostic: capture layout state at scroll-fire time, before
+            // any further mutation. We then have three snapshots:
+            //   mutationLayout  — right after the storage mutation
+            //   preFireLayout   — right before scrollRangeToVisible runs
+            //                     (i.e. the moment AppKit *could* have drawn
+            //                     between the reconcile returning and us
+            //                     getting here from the async hop)
+            // If `visibleBottomUnlaid` is true at preFire, that's the
+            // smoking-gun condition for the "black for a second" flash —
+            // visible glyphs weren't generated before drawing.
+            if let preFire = captureLayoutState() {
+                let delayMs: String
+                if let started = mutationCompletedAt {
+                    delayMs = String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - started) * 1000)
+                } else {
+                    delayMs = "n/a"
+                }
+                let mutUnlaid = mutationLayout?.visibleBottomUnlaid ?? false
+                if mutUnlaid || preFire.visibleBottomUnlaid {
+                    appLog(
+                        "StoryTextView",
+                        "BLACKFLASH suspect: hopDelay=\(delayMs)ms"
+                        + " | mut[unlaid=\(mutationLayout?.firstUnlaid ?? -1)"
+                        + " visible=\(mutationLayout?.visibleCharStart ?? -1)..\(mutationLayout?.visibleCharEnd ?? -1)"
+                        + " storage=\(mutationLayout?.storageLength ?? -1)]"
+                        + " preFire[unlaid=\(preFire.firstUnlaid)"
+                        + " visible=\(preFire.visibleCharStart)..\(preFire.visibleCharEnd)"
+                        + " storage=\(preFire.storageLength)]"
+                        + " mutUnlaid=\(mutUnlaid) preFireUnlaid=\(preFire.visibleBottomUnlaid)",
+                        level: .info
+                    )
+                }
+            }
+
             // Log the state we're correcting from, but only when it's
             // interesting — i.e., the clip is in the blank zone past the
             // doc end (gap < -1). Otherwise we'd spam the log on every
@@ -505,26 +602,3 @@ private func appendLine(
     }
 }
 
-private extension NSColor {
-    /// Parses `#RRGGBB` (or 3-char `#RGB`). Used by the highlight pipeline
-    /// when serialising a custom highlight's stored hex value.
-    convenience init?(hexString: String) {
-        var s = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.hasPrefix("#") { s.removeFirst() }
-        guard let value = UInt64(s, radix: 16) else { return nil }
-        let r, g, b: CGFloat
-        switch s.count {
-        case 3:
-            r = CGFloat((value >> 8) & 0xF) / 15
-            g = CGFloat((value >> 4) & 0xF) / 15
-            b = CGFloat( value       & 0xF) / 15
-        case 6:
-            r = CGFloat((value >> 16) & 0xFF) / 255
-            g = CGFloat((value >> 8)  & 0xFF) / 255
-            b = CGFloat( value        & 0xFF) / 255
-        default:
-            return nil
-        }
-        self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
-    }
-}

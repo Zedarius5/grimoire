@@ -15,6 +15,26 @@ public enum HighlightProcessor {
         let count = plain.length
         guard count > 0 else { return line }
 
+        // Fast path: skip the expensive per-character override allocation
+        // and run-walk below when no rule even *occurs* in this line.
+        // Most lines in a typical session don't match any user-defined
+        // rule, so this saves the bulk of the highlight-rebuild cost
+        // (observed: ~770ms → expected ~80ms for ~1k lines at 5 rules).
+        //
+        // The check ignores `wholeWord`: a `contains` is much cheaper
+        // than the full word-boundary test, so we conservatively
+        // over-include and let the slow path correctly reject any
+        // "test" inside "testing" cases. Never under-includes.
+        var hasMatch = false
+        for rule in active {
+            let opts: NSString.CompareOptions = rule.caseSensitive ? [] : [.caseInsensitive]
+            if plain.range(of: rule.text, options: opts).location != NSNotFound {
+                hasMatch = true
+                break
+            }
+        }
+        guard hasMatch else { return line }
+
         var fg = [String?](repeating: nil, count: count)
         var bg = [String?](repeating: nil, count: count)
         var lineFg: String? = nil

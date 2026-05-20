@@ -18,22 +18,15 @@ struct ContentView: View {
     @EnvironmentObject private var highlights: HighlightStore
     @Environment(\.openWindow) private var openWindow
 
-    @State private var importingMacros: Bool = false
-    @State private var macroError: String? = nil
-
     @State private var fontSize: Double = 13
     @State private var panes: [PaneSpec] = PaneSpec.defaults
     @State private var paneSizes: [String: CGFloat] = [:]
     @State private var activeProfile: (account: String, character: String)? = nil
 
-    // Drag-preview state. `draggingPaneId` is the pane currently being
-    // dragged (ghosted at 35% opacity); `hoverTargetId` is the drop target
-    // under the cursor (accent-ringed). `dragGeneration` is a monotonically-
-    // increasing token so a stale-drag timeout can tell whether a later
-    // drag has already started.
-    @State private var draggingPaneId: String? = nil
-    @State private var hoverTargetId:  String? = nil
-    @State private var dragGeneration: Int = 0
+    /// Drag/hover state for pane reordering. The ghost-source opacity and
+    /// hover-target ring read from this; `PaneDragWrapper` invokes its
+    /// callbacks via the state object's methods.
+    @StateObject private var dragState = PaneDragState()
 
     // Identifiers we use as "items" inside the center-column resizable stack.
     private static let centerTopId    = "region.top"
@@ -53,12 +46,10 @@ struct ContentView: View {
     @State private var launchGameCode: String = "GS3"
     @State private var rememberCredentials: Bool = true
 
-    @AppStorage("grimoire.macroThreshold") private var macroThreshold: Int = 3
-
-    // Timer-bar normalisation. When on, Active Spells / Buffs / Cooldowns /
-    // Debuffs bars fill against a per-dialog fixed window (in seconds).
-    // When off, all bars use the server-supplied `value` directly (Wrayth
-    // behaviour: % of original duration).
+    // Timer-bar normalisation. The OptionsPopover edits the same five keys
+    // via parallel `@AppStorage` declarations; UserDefaults is the shared
+    // source of truth, so any change there reactively updates `timerConfig`
+    // lookups below without explicit plumbing.
     @AppStorage("grimoire.timerBars.normalize")            private var timerBarsNormalize: Bool = true
     @AppStorage("grimoire.timerBars.window.activeSpells")  private var timerWindowActiveSpells: Int = 1800
     @AppStorage("grimoire.timerBars.window.buffs")         private var timerWindowBuffs: Int = 1800
@@ -69,32 +60,6 @@ struct ContentView: View {
 
     private func panes(in region: PaneRegion) -> [PaneSpec] {
         panes.filter { $0.region == region }
-    }
-
-    /// Renders one row of the Options "Timer bars" section — a label, a
-    /// stepper, and a rendered "Nm" / "Ns" readout. `unit` controls whether
-    /// the stored seconds value is stepped in 1-minute or 15-second increments.
-    private enum TimerStepperUnit { case seconds, minutes }
-    @ViewBuilder
-    private func timerWindowRow(label: String, minutes: Binding<Int>, unit: TimerStepperUnit) -> some View {
-        let step = (unit == .minutes) ? 60 : 15
-        let range = (unit == .minutes) ? 60...7200 : 15...1800
-        HStack {
-            Text(label).frame(width: 110, alignment: .leading)
-            Spacer()
-            Stepper("", value: minutes, in: range, step: step)
-                .labelsHidden()
-            Text(format(seconds: minutes.wrappedValue))
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 60, alignment: .trailing)
-        }
-    }
-
-    private func format(seconds: Int) -> String {
-        if seconds % 60 == 0 { return "\(seconds / 60)m" }
-        if seconds < 60      { return "\(seconds)s" }
-        return "\(seconds / 60)m \(seconds % 60)s"
     }
 
     /// Looks up the timer-bar window (in seconds) for a given dialog id.
@@ -138,7 +103,7 @@ struct ContentView: View {
     private var bottomBar: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                InputBar(client: client, fontSize: fontSize, gameState: client.gameState)
+                InputBar(client: client, gameState: client.gameState)
                 VitalsBar(state: client.gameState)
             }
             .frame(maxWidth: .infinity)
@@ -165,6 +130,7 @@ struct ContentView: View {
             bottomBar
         }
         .frame(minWidth: 1000, minHeight: 600)
+        .environment(\.fontSize, fontSize)
         .environment(\.highlights, highlights.highlights)
         .environment(\.openURL, OpenURLAction { url in
             GrimoireLinkRouter(client: client).handle(url)
@@ -182,13 +148,6 @@ struct ContentView: View {
             client.onLaunchURL = { url in
                 _ = NSWorkspace.shared.open(url)
             }
-        }
-        .fileImporter(
-            isPresented: $importingMacros,
-            allowedContentTypes: [.xml, .data],
-            allowsMultipleSelection: false
-        ) { result in
-            handleMacroImport(result)
         }
         .onChange(of: panes) { _, newValue in
             if let profile = activeProfile {
@@ -323,7 +282,12 @@ struct ContentView: View {
                 Label("Windows", systemImage: "rectangle.3.group")
             }
             .popover(isPresented: $showingWindowsMenu, arrowEdge: .bottom) {
-                windowsPopover
+                WindowsPopover(
+                    panes: $panes,
+                    paneSizes: $paneSizes,
+                    showingDiscoveredPanes: $showingDiscoveredPanes,
+                    onDone: { showingWindowsMenu = false }
+                )
             }
 
             Button {
@@ -332,7 +296,10 @@ struct ContentView: View {
                 Label("Options", systemImage: "gearshape")
             }
             .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
-                optionsPopover
+                OptionsPopover(
+                    fontSize: $fontSize,
+                    showingOptions: $showingOptions
+                )
             }
         }
         .padding(.horizontal, 12)
@@ -362,7 +329,16 @@ struct ContentView: View {
                     Label("Play...", systemImage: "play.fill")
                 }
                 .popover(isPresented: $showingConnect, arrowEdge: .bottom) {
-                    connectPopover
+                    ConnectView(
+                        client: client,
+                        showingConnect: $showingConnect,
+                        launchAccount: $launchAccount,
+                        launchPassword: $launchPassword,
+                        launchCharacter: $launchCharacter,
+                        launchGameCode: $launchGameCode,
+                        rememberCredentials: $rememberCredentials,
+                        onAuthenticated: handleAuthenticated
+                    )
                 }
 
                 if let errorText = currentErrorText {
@@ -430,299 +406,6 @@ struct ContentView: View {
 
     // MARK: - Popovers
 
-    private var optionsPopover: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Options").font(.headline)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Font size")
-                    Spacer()
-                    Text("\(Int(fontSize))pt")
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                Slider(value: $fontSize, in: 9...28, step: 1)
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Macros").font(.subheadline.bold())
-                HStack {
-                    Text("Repeat-command minimum length")
-                    Spacer()
-                    Stepper("\(macroThreshold)", value: $macroThreshold, in: 1...50)
-                        .labelsHidden()
-                    Text("\(macroThreshold)")
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24, alignment: .trailing)
-                }
-                Text("Ctrl+Return repeats the most recent command at least this many characters long. Option+Return repeats the one before it.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    Button("Import macros from XML…") { importingMacros = true }
-                    Button("Open editor…") {
-                        showingOptions = false
-                        openWindow(id: "macros")
-                    }
-                    Spacer()
-                    if !macros.config.sets.isEmpty {
-                        Text("\(macros.config.sets.map(\.bindings.count).reduce(0, +)) bindings loaded")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if !macros.config.sets.isEmpty {
-                    HStack {
-                        Text("Active set")
-                        Spacer()
-                        Picker("", selection: $macros.config.activeSetId) {
-                            ForEach(macros.config.sets) { set in
-                                Text(set.name).tag(set.id)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(width: 200)
-                    }
-                }
-                if let macroError {
-                    Text(macroError)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                }
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Timer bars").font(.subheadline.bold())
-                Toggle("Normalize fill against a fixed time window", isOn: $timerBarsNormalize)
-                Text("When off, bars use the server's reported value (Wrayth behavior: percentage of the spell's original duration).")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if timerBarsNormalize {
-                    timerWindowRow(label: "Active Spells", minutes: $timerWindowActiveSpells, unit: .minutes)
-                    timerWindowRow(label: "Buffs",         minutes: $timerWindowBuffs,        unit: .minutes)
-                    timerWindowRow(label: "Cooldowns",     minutes: $timerWindowCooldowns,    unit: .minutes)
-                    timerWindowRow(label: "Debuffs",       minutes: $timerWindowDebuffs,      unit: .seconds)
-                    Text("Bars fill against this window. Spells with more remaining show a » overflow chevron.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Highlights").font(.subheadline.bold())
-                HStack {
-                    Button("Open editor…") {
-                        showingOptions = false
-                        openWindow(id: "highlights")
-                    }
-                    Spacer()
-                    Text("\(highlights.highlights.count) rules loaded")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Text("Paint text spans (or whole lines) with custom fg/bg. Import Wrayth XML or build them in the editor.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .frame(width: 400)
-    }
-
-    private var connectPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Play").font(.headline)
-
-            HStack {
-                Text("Account").frame(width: 80, alignment: .trailing)
-                TextField("Simu account", text: $launchAccount)
-                    .textFieldStyle(.roundedBorder)
-            }
-            HStack {
-                Text("Password").frame(width: 80, alignment: .trailing)
-                SecureField("password", text: $launchPassword)
-                    .textFieldStyle(.roundedBorder)
-            }
-            HStack {
-                Text("Character").frame(width: 80, alignment: .trailing)
-                TextField("e.g. Drakuud", text: $launchCharacter)
-                    .textFieldStyle(.roundedBorder)
-            }
-            HStack {
-                Text("Game").frame(width: 80, alignment: .trailing)
-                Picker("", selection: $launchGameCode) {
-                    Text("GemStone IV (GS3)").tag("GS3")
-                    Text("GemStone IV — Platinum (GSX)").tag("GSX")
-                    Text("GemStone IV — Shattered (GSF)").tag("GSF")
-                    Text("GemStone IV — Test (GST)").tag("GST")
-                    Text("DragonRealms (DR)").tag("DR")
-                    Text("DragonRealms — Platinum (DRX)").tag("DRX")
-                    Text("DragonRealms — Fallen (DRF)").tag("DRF")
-                }
-                .labelsHidden()
-            }
-            Toggle("Remember on this Mac", isOn: $rememberCredentials)
-                .font(.caption)
-            HStack {
-                Spacer()
-                Button("Authenticate & Play") {
-                    Task { await playWithSgeAuth() }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(launchAccount.isEmpty || launchPassword.isEmpty || launchCharacter.isEmpty)
-            }
-        }
-        .padding(16)
-        .frame(width: 420)
-    }
-
-    /// Visual ordering of regions in the Windows popover grid — clockwise
-    /// from left, with the off-screen "hidden" slot at the end.
-    private static let regionGridOrder: [PaneRegion] = [.left, .top, .right, .bottom, .hidden]
-
-    private var windowsPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Windows").font(.headline)
-            Text("Pick where each window appears.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    sectionHeader("Standard")
-                    gridHeaderRow
-                    ForEach($panes) { $pane in
-                        if !pane.id.hasPrefix("auto.") {
-                            paneRow(pane: $pane)
-                        }
-                    }
-
-                    let discoveredCount = panes.filter { $0.id.hasPrefix("auto.") }.count
-                    if discoveredCount > 0 {
-                        Divider().padding(.vertical, 4)
-                        DisclosureGroup(isExpanded: $showingDiscoveredPanes) {
-                            gridHeaderRow
-                            ForEach($panes) { $pane in
-                                if pane.id.hasPrefix("auto.") {
-                                    paneRow(pane: $pane)
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text("Discovered by scripts")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .tracking(0.4)
-                                    .foregroundStyle(.secondary)
-                                Text("(\(discoveredCount))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(maxHeight: 460)
-            Divider()
-            HStack {
-                Button("Reset to defaults") {
-                    panes = PaneSpec.defaults
-                    paneSizes = [:]
-                }
-                Spacer()
-                Button("Done") {
-                    showingWindowsMenu = false
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(14)
-        .frame(width: 420)
-    }
-
-    @ViewBuilder
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(0.8)
-            .foregroundStyle(.secondary)
-            .padding(.top, 2)
-    }
-
-    /// Column labels for the placement grid — small arrow glyphs above each
-    /// region's column of toggle dots, plus the eye-slash for the hidden
-    /// slot.
-    private var gridHeaderRow: some View {
-        HStack(spacing: 4) {
-            Color.clear.frame(maxWidth: .infinity)  // name-column spacer
-            ForEach(Self.regionGridOrder) { region in
-                Image(systemName: Self.symbol(for: region))
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 30, height: 18)
-                    .help(region.displayName)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func paneRow(pane: Binding<PaneSpec>) -> some View {
-        HStack(spacing: 4) {
-            Text(pane.wrappedValue.title)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(Self.regionGridOrder) { region in
-                regionToggle(pane: pane, region: region)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func regionToggle(pane: Binding<PaneSpec>, region: PaneRegion) -> some View {
-        let isActive = pane.wrappedValue.region == region
-        Button {
-            pane.region.wrappedValue = region
-        } label: {
-            Image(systemName: Self.symbol(for: region))
-                .font(.system(size: 11, weight: isActive ? .bold : .regular))
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-                .frame(width: 30, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isActive ? Color.accentColor.opacity(0.18) : Color.clear)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(
-                            isActive ? Color.accentColor.opacity(0.6) : Color.white.opacity(0.08),
-                            lineWidth: 0.5
-                        )
-                )
-        }
-        .buttonStyle(.plain)
-        .help(region.displayName)
-    }
-
-    private static func symbol(for region: PaneRegion) -> String {
-        switch region {
-        case .left:   return "arrow.left"
-        case .top:    return "arrow.up"
-        case .right:  return "arrow.right"
-        case .bottom: return "arrow.down"
-        case .hidden: return "eye.slash"
-        }
-    }
-
     private var lichLogPopover: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -786,7 +469,7 @@ struct ContentView: View {
     /// already-populated regions the zone stays hidden so it doesn't reserve
     /// dead pixels.
     private func dropZoneVisible(for region: PaneRegion) -> Bool {
-        draggingPaneId != nil && panes(in: region).isEmpty
+        dragState.draggingPaneId != nil && panes(in: region).isEmpty
     }
 
     /// Drop handler for empty regions — simply reassigns the source pane's
@@ -795,7 +478,7 @@ struct ContentView: View {
     private func moveIntoEmptyRegion(sourceId: String, region: PaneRegion) -> Bool {
         guard let idx = panes.firstIndex(where: { $0.id == sourceId }) else { return true }
         panes[idx].region = region
-        endPaneDrag()
+        dragState.endDrag()
         return true
     }
 
@@ -889,7 +572,6 @@ struct ContentView: View {
                         GameView(
                             lines: client.mainLines,
                             revision: client.revision(for: "main"),
-                            fontSize: fontSize,
                             onLinkClick: { url in
                                 _ = GrimoireLinkRouter(client: client).handle(url)
                             }
@@ -954,10 +636,10 @@ struct ContentView: View {
 
     @ViewBuilder
     private func paneView(for spec: PaneSpec) -> some View {
-        let isSource = spec.id == draggingPaneId
+        let isSource = spec.id == dragState.draggingPaneId
         let isHoverTarget = !isSource
-            && draggingPaneId != nil
-            && spec.id == hoverTargetId
+            && dragState.draggingPaneId != nil
+            && spec.id == dragState.hoverTargetId
 
         // AppKit-backed wrapper handles the drag and drop primitives directly,
         // avoiding the SwiftUI `.draggable` / `.dropDestination` reliability
@@ -965,18 +647,14 @@ struct ContentView: View {
         // feedback stays in SwiftUI, driven by the wrapper's callbacks.
         PaneDragWrapper(
             paneId: spec.id,
-            onDragBegin: { id in beginPaneDrag(id: id) },
-            onDragEnd: { endPaneDrag() },
+            onDragBegin: { id in dragState.beginDrag(id: id) },
+            onDragEnd: { dragState.endDrag() },
             onHoverChange: { hovering in
-                if hovering {
-                    hoverTargetId = spec.id
-                } else if hoverTargetId == spec.id {
-                    hoverTargetId = nil
-                }
+                dragState.hoverChanged(id: spec.id, hovering: hovering)
             },
             onDrop: { sourceId in
                 let ok = applyPaneDrop(sourceId: sourceId, target: spec)
-                endPaneDrag()
+                dragState.endDrag()
                 return ok
             }
         ) {
@@ -1017,27 +695,6 @@ struct ContentView: View {
         return true
     }
 
-    /// Marks a drag as starting. Also schedules a fallback reset so a
-    /// dropped-then-orphaned drag can't leave the source pane greyed-out
-    /// forever (the symptom user noticed earlier).
-    private func beginPaneDrag(id: String) {
-        dragGeneration &+= 1
-        let gen = dragGeneration
-        draggingPaneId = id
-        hoverTargetId  = nil
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(15))
-            if dragGeneration == gen, draggingPaneId == id {
-                endPaneDrag()
-            }
-        }
-    }
-
-    private func endPaneDrag() {
-        draggingPaneId = nil
-        hoverTargetId  = nil
-    }
-
     @ViewBuilder
     private func paneContent(for spec: PaneSpec) -> some View {
         // `isActive` is passed into each pane so the pane can fade its
@@ -1050,7 +707,6 @@ struct ContentView: View {
                 title: spec.title,
                 lines: client.lines(for: streamId),
                 revision: client.revision(for: streamId),
-                fontSize: fontSize,
                 isActive: client.isActive,
                 onLinkClick: { url in
                     _ = GrimoireLinkRouter(client: client).handle(url)
@@ -1061,7 +717,6 @@ struct ContentView: View {
             if let dlg = client.dialogs[dialogId] {
                 DialogPane(
                     dialog: dlg,
-                    fontSize: fontSize,
                     onCommand: { client.send($0) },
                     timerConfig: timerConfig(for: dialogId),
                     wounds: dialogId == "UberBar" ? client.gameState.wounds : nil,
@@ -1074,7 +729,6 @@ struct ContentView: View {
                     title: "\(spec.title) (waiting)",
                     lines: [],
                     revision: 0,
-                    fontSize: fontSize,
                     isActive: client.isActive
                 )
             }
@@ -1101,60 +755,39 @@ struct ContentView: View {
 
     // MARK: - Connect / disconnect
 
-    private func playWithSgeAuth() async {
-        let account   = launchAccount.trimmingCharacters(in: .whitespaces)
-        let password  = launchPassword
-        let character = launchCharacter.trimmingCharacters(in: .whitespaces)
-        let game      = launchGameCode
-
-        guard !account.isEmpty, !password.isEmpty, !character.isEmpty else { return }
-
-        showingConnect = false
-
-        let ruby     = resolveRubyPath()
-        let lichDir  = NSString(string: "~/Gemstone").expandingTildeInPath
-        let lichPath = "\(lichDir)/lich.rbw"
-        let script   = NSString(string: "~/Documents/Repositories/Grimoire/scripts/sge_auth.rb").expandingTildeInPath
-
-        client.clearFailure()
-
-        let creds: GameCredentials
-        do {
-            creds = try await SgeAuth.authenticate(
-                rubyPath: ruby,
-                scriptPath: script,
-                lichDir: lichDir,
-                account: account,
-                password: password,
-                character: character,
-                gameCode: game
-            )
-        } catch {
-            client.reportFailure(error.localizedDescription)
-            return
-        }
-
+    /// Post-auth handler invoked by `ConnectView` once SGE has returned game
+    /// credentials. Persists last-login + keychain, loads the per-character
+    /// pane layout, spawns lich, then polls until the TCP socket comes up.
+    private func handleAuthenticated(_ result: ConnectAuthResult) {
         Preferences.saveLastLogin(.init(
-            account: account, character: character, gameCode: game
+            account: result.account,
+            character: result.character,
+            gameCode: result.gameCode
         ))
-        if rememberCredentials {
-            Keychain.save(password: password, account: account)
+        if result.rememberCredentials {
+            Keychain.save(password: result.password, account: result.account)
         } else {
-            Keychain.deletePassword(account: account)
+            Keychain.deletePassword(account: result.account)
         }
 
-        activeProfile = (account: account, character: character)
+        activeProfile = (account: result.account, character: result.character)
         if let saved: [PaneSpec] = Preferences.loadPanes(
-            as: [PaneSpec].self, account: account, character: character
+            as: [PaneSpec].self, account: result.account, character: result.character
         ) {
             panes = mergeWithDefaults(saved: saved)
         } else {
             panes = PaneSpec.defaults
         }
-        paneSizes = Preferences.loadSizes(account: account, character: character) ?? [:]
+        paneSizes = Preferences.loadSizes(
+            account: result.account, character: result.character
+        ) ?? [:]
+
+        let lichDir  = NSString(string: "~/Gemstone").expandingTildeInPath
+        let lichPath = "\(lichDir)/lich.rbw"
+        let creds = result.serverCreds
 
         lich.launch(
-            rubyPath: ruby,
+            rubyPath: result.rubyPath,
             lichPath: lichPath,
             args: [
                 "-g", "\(creds.host):\(creds.port)",
@@ -1191,19 +824,6 @@ struct ContentView: View {
         }
     }
 
-    private func resolveRubyPath() -> String {
-        let candidates = [
-            NSString(string: "~/.rbenv/shims/ruby").expandingTildeInPath,
-            "/opt/homebrew/bin/ruby",
-            "/usr/local/bin/ruby",
-            "/usr/bin/ruby"
-        ]
-        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
-            return path
-        }
-        return "/usr/bin/ruby"
-    }
-
     // MARK: - Macros
 
     private func setupMacros() {
@@ -1234,19 +854,6 @@ struct ContentView: View {
                   let config = try? MacroParser.parse(file: url) {
             macros.install(config)
             Preferences.saveMacros(config)
-        }
-    }
-
-    private func handleMacroImport(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, let url = urls.first else { return }
-        do {
-            let config = try MacroParser.parse(file: url)
-            macros.install(config)
-            Preferences.saveMacros(config)
-            UserDefaults.standard.set(url.absoluteString, forKey: "grimoire.macroFile")
-            macroError = nil
-        } catch {
-            macroError = error.localizedDescription
         }
     }
 

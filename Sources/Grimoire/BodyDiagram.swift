@@ -1,31 +1,83 @@
 import SwiftUI
 import GrimoireKit
 
-/// A stylized front-view body silhouette that colors each region by its
-/// current wound / scar severity. Designed to sit at the top of the UberBar
-/// dialog as Wrayth does, scaling to fit the available width.
+/// Wounds widget for the UberBar dialog. A simple front-view paperdoll
+/// silhouette with numbered "pip" overlays at each affected body part:
+/// red for injuries, tan for scars, with the rank (1/2/3) printed inside.
+///
+/// Severity reads from both colour *and* number so it stays scannable at a
+/// glance and remains accessible regardless of colour perception.
+///
+/// Parts without a natural front-view position render in the silhouette's
+/// own dead-space zones rather than getting squeezed onto the body:
+/// - **Eyes**: in the gap between the head and the shoulders (one per
+///   side, with the pair pulled out wide so each pip is fully visible).
+/// - **Back / Nrvs**: in the empty space beside the legs, under the
+///   arms, with short labels below each pip so the user can tell which
+///   is which.
 struct BodyDiagram: View {
     let wounds: Wounds
+
+    /// Total widget footprint. Tracked by `DialogPane.bodyDiagramWidth`
+    /// and `bodyDiagramHeight` — keep both in sync if changed.
+    static let totalSize = CGSize(width: 110, height: 150)
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                ForEach(BodyDiagramLayout.regions) { region in
-                    let info = wounds.parts[region.part] ?? WoundInfo()
-                    region.view(
-                        in: rect(for: region, size: geo.size),
-                        stroke: Color.white.opacity(0.18),
-                        fill: fillColor(for: info),
-                        hatched: info.injury == 0 && info.scar > 0
-                    )
+                SilhouetteShape()
+                    .stroke(Color.white.opacity(0.28), lineWidth: 1)
+
+                // Front-visible body parts.
+                ForEach(PipAnchor.frontVisible) { anchor in
+                    if let info = wounds.parts[anchor.part],
+                       let kind = pipKind(for: info) {
+                        WoundPip(
+                            kind: kind,
+                            rank: kind == .injury ? info.injury : info.scar,
+                            size: anchor.size
+                        )
+                        .position(
+                            x: anchor.x * geo.size.width,
+                            y: anchor.y * geo.size.height
+                        )
+                    }
+                }
+
+                // Off-body parts — labeled pip+label vertical stacks in the
+                // dead space outside the silhouette. Eyes sit above the
+                // shoulders (one each side); back/nerves below, beside the
+                // legs.
+                ForEach(OffBodyAnchor.all) { anchor in
+                    if let info = wounds.parts[anchor.part],
+                       let kind = pipKind(for: info) {
+                        VStack(spacing: 1) {
+                            WoundPip(
+                                kind: kind,
+                                rank: kind == .injury ? info.injury : info.scar,
+                                size: anchor.size
+                            )
+                            Text(anchor.label)
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
+                        }
+                        .position(
+                            x: anchor.x * geo.size.width,
+                            y: anchor.y * geo.size.height
+                        )
+                    }
                 }
             }
-            .frame(width: geo.size.width, height: geo.size.height)
         }
-        .aspectRatio(BodyDiagramLayout.aspect, contentMode: .fit)
-        .frame(maxWidth: 110, maxHeight: 120)
-        .padding(.vertical, 1)
+        .frame(width: Self.totalSize.width, height: Self.totalSize.height)
         .help(tooltipText)
+    }
+
+    private func pipKind(for info: WoundInfo) -> WoundPip.Kind? {
+        if info.injury > 0 { return .injury }
+        if info.scar > 0   { return .scar }
+        return nil
     }
 
     private var tooltipText: String {
@@ -38,125 +90,177 @@ struct BodyDiagram: View {
             return "\(part.rawValue): \(bits.joined(separator: ", "))"
         }.joined(separator: "\n")
     }
+}
 
-    private func rect(for region: BodyRegion, size: CGSize) -> CGRect {
-        CGRect(
-            x: (region.x - region.w / 2) * size.width,
-            y: (region.y - region.h / 2) * size.height,
-            width: region.w * size.width,
-            height: region.h * size.height
-        )
-    }
+// MARK: - Pip
 
-    /// Injury wins over scar. Injuries use warm hues (yellow/orange/red).
-    /// Scars use a cool palette (cyan/teal/violet) AND a diagonal hatch
-    /// overlay — distinguishable by colour family *and* by texture so they
-    /// don't blur together at a glance.
-    private func fillColor(for info: WoundInfo) -> Color? {
-        if info.injury > 0 {
-            switch info.injury {
-            case 1:  return Color(red: 1.00, green: 0.96, blue: 0.05).opacity(0.95) // bright yellow
-            case 2:  return Color(red: 1.00, green: 0.48, blue: 0.05).opacity(0.95) // saturated orange
-            default: return Color(red: 0.95, green: 0.10, blue: 0.10).opacity(0.95) // bright red
-            }
-        }
-        if info.scar > 0 {
-            switch info.scar {
-            case 1:  return Color(red: 0.78, green: 0.64, blue: 0.45).opacity(0.85) // pale tan
-            case 2:  return Color(red: 0.62, green: 0.42, blue: 0.25).opacity(0.90) // medium brown
-            default: return Color(red: 0.40, green: 0.22, blue: 0.12).opacity(0.95) // dark brown
-            }
-        }
-        return nil
+/// One numbered severity badge — red for injury, tan for scar, with the
+/// rank (1/2/3) printed in the middle.
+///
+/// Uses the `N.circle.fill` SF Symbol family so the number is
+/// type-set-centered by Apple's typography (rather than fighting with
+/// `Text` baseline metrics, which leave the glyph visibly low inside
+/// the circle). `.palette` rendering colours the digit as the primary
+/// foreground and the circle as the secondary.
+struct WoundPip: View {
+    enum Kind { case injury, scar }
+
+    let kind: Kind
+    let rank: Int
+    var size: CGFloat = 18
+
+    var body: some View {
+        Image(systemName: "\(rank).circle.fill")
+            .resizable()
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(
+                kind == .injury
+                    ? Color.white
+                    : Color(red: 0.18, green: 0.09, blue: 0.04),
+                kind == .injury
+                    ? GameTheme.woundInjury
+                    : GameTheme.woundScar
+            )
+            .frame(width: size, height: size)
     }
 }
 
-/// Diagonal hatching, drawn line-by-line so a containing `.clipShape` keeps
-/// the strokes inside whatever body region they're decorating.
-struct DiagonalHatch: Shape {
-    var spacing: CGFloat = 4
+// MARK: - Silhouette shape
 
+/// A stylized front-view human paperdoll outline drawn as a single Shape.
+/// All sub-figures (head, neck, torso, arms, hands, legs) are added to one
+/// `Path` so a single stroke renders the whole silhouette without seams.
+///
+/// Proportions are normalized to the shape's `rect` and tuned by eye to
+/// look like a recognisable standing figure. Legs are intentionally
+/// stopped well above the bottom edge so the off-body Back/Nrvs labels
+/// have room to sit beside the lower body without colliding with feet.
+struct SilhouetteShape: Shape {
     func path(in rect: CGRect) -> Path {
+        let w = rect.width
+        let h = rect.height
         var path = Path()
-        let diag = rect.width + rect.height
-        var offset: CGFloat = -rect.height
-        while offset < diag {
-            path.move(to: CGPoint(x: rect.minX + offset, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.minX + offset + rect.height,
-                                     y: rect.minY + rect.height))
-            offset += spacing
-        }
+
+        // Head — slightly taller than wide.
+        path.addEllipse(in: CGRect(
+            x: 0.40 * w, y: 0.02 * h,
+            width: 0.20 * w, height: 0.16 * h
+        ))
+
+        // Neck — short rounded rect bridging head to chest.
+        path.addRoundedRect(
+            in: CGRect(x: 0.45 * w, y: 0.17 * h, width: 0.10 * w, height: 0.06 * h),
+            cornerSize: CGSize(width: 2, height: 2)
+        )
+
+        // Torso — trapezoidal subpath, shoulders wider than waist.
+        var torso = Path()
+        torso.move(to:   CGPoint(x: 0.31 * w, y: 0.23 * h))   // top-left shoulder
+        torso.addLine(to: CGPoint(x: 0.69 * w, y: 0.23 * h))   // top-right shoulder
+        torso.addLine(to: CGPoint(x: 0.63 * w, y: 0.58 * h))   // right hip
+        torso.addLine(to: CGPoint(x: 0.37 * w, y: 0.58 * h))   // left hip
+        torso.closeSubpath()
+        path.addPath(torso)
+
+        // Arms — capsules hanging at sides, just outside the shoulders.
+        // Shortened so the figure's proportions read less spider-like
+        // and so there's room for the eye labels above the shoulders.
+        path.addRoundedRect(
+            in: CGRect(x: 0.16 * w, y: 0.24 * h, width: 0.10 * w, height: 0.28 * h),
+            cornerSize: CGSize(width: 5, height: 5)
+        )
+        path.addRoundedRect(
+            in: CGRect(x: 0.74 * w, y: 0.24 * h, width: 0.10 * w, height: 0.28 * h),
+            cornerSize: CGSize(width: 5, height: 5)
+        )
+
+        // Hands — ellipses at the bottom of each (shortened) arm. Same
+        // size as before, shifted up to follow the arm endpoints.
+        path.addEllipse(in: CGRect(
+            x: 0.14 * w, y: 0.52 * h,
+            width: 0.14 * w, height: 0.08 * h
+        ))
+        path.addEllipse(in: CGRect(
+            x: 0.72 * w, y: 0.52 * h,
+            width: 0.14 * w, height: 0.08 * h
+        ))
+
+        // Legs — capsules with a clear gap between them. Shortened
+        // (was 0.58→0.98) so the Back/Nrvs labels can sit beside the
+        // lower body without overlapping feet.
+        path.addRoundedRect(
+            in: CGRect(x: 0.36 * w, y: 0.58 * h, width: 0.12 * w, height: 0.32 * h),
+            cornerSize: CGSize(width: 5, height: 5)
+        )
+        path.addRoundedRect(
+            in: CGRect(x: 0.52 * w, y: 0.58 * h, width: 0.12 * w, height: 0.32 * h),
+            cornerSize: CGSize(width: 5, height: 5)
+        )
+
         return path
     }
 }
 
-// MARK: - Layout
+// MARK: - Pip anchors
 
-/// Normalized (0–1) layout of each body region inside the diagram. Positions
-/// are eyeballed to look like a stylized front-view human figure.
-private struct BodyRegion: Identifiable {
+/// Where each front-visible body part's pip lands on the silhouette,
+/// in normalized 0–1 coordinates. Back and nsys live in `OffBodyAnchor`
+/// because they don't sit on the silhouette itself.
+private struct PipAnchor: Identifiable {
     let part: BodyPart
     let x: CGFloat
     let y: CGFloat
-    let w: CGFloat
-    let h: CGFloat
-    let kind: Kind
+    var size: CGFloat = 18
 
     var id: BodyPart { part }
 
-    enum Kind { case circle, capsule, rounded }
+    // Almost every pip is the standard 18pt — keeps the visual rhythm
+    // even. Neck is the exception (14pt) because the neck band itself
+    // is so narrow that a full-size pip would overflow into both the
+    // head ellipse and the shoulder line at once.
+    static let frontVisible: [PipAnchor] = [
+        PipAnchor(part: .head,      x: 0.50, y: 0.10,  size: 18),
+        PipAnchor(part: .neck,      x: 0.50, y: 0.20,  size: 14),
 
-    func view(in rect: CGRect, stroke: Color, fill: Color?, hatched: Bool) -> some View {
-        ZStack {
-            shapeOutline.stroke(stroke, lineWidth: 1)
-            if let fill {
-                shapeOutline.fill(fill)
-                if hatched {
-                    DiagonalHatch(spacing: 3)
-                        .stroke(Color.white.opacity(0.55), lineWidth: 0.8)
-                        .clipShape(shapeOutline)
-                }
-            }
-        }
-        .frame(width: rect.width, height: rect.height)
-        .position(x: rect.midX, y: rect.midY)
-    }
+        // Torso.
+        PipAnchor(part: .chest,     x: 0.50, y: 0.32,  size: 18),
+        PipAnchor(part: .abdomen,   x: 0.50, y: 0.52,  size: 18),
 
-    private var shapeOutline: AnyShape {
-        switch kind {
-        case .circle:  return AnyShape(Circle())
-        case .capsule: return AnyShape(Capsule())
-        case .rounded: return AnyShape(RoundedRectangle(cornerRadius: 3))
-        }
-    }
+        // Arms — capsule centers shifted up with the shorter arm length.
+        PipAnchor(part: .leftArm,   x: 0.21, y: 0.37,  size: 18),
+        PipAnchor(part: .rightArm,  x: 0.79, y: 0.37,  size: 18),
+
+        // Hands sit at the wrist end of the (shortened) arms.
+        PipAnchor(part: .leftHand,  x: 0.21, y: 0.56,  size: 18),
+        PipAnchor(part: .rightHand, x: 0.79, y: 0.56,  size: 18),
+
+        // Legs.
+        PipAnchor(part: .leftLeg,   x: 0.42, y: 0.75,  size: 18),
+        PipAnchor(part: .rightLeg,  x: 0.58, y: 0.75,  size: 18),
+    ]
 }
 
-private enum BodyDiagramLayout {
-    static let aspect: CGFloat = 100.0 / 160.0
+/// Body parts that have no natural pip-on-the-silhouette position.
+/// Rendered as a labeled vertical pip+text stack in the dead space
+/// outside the silhouette — eyes above the shoulders, back/nerves
+/// below, beside the legs.
+///
+/// Labels are tuned for column-width balance: `L.Eye` / `R.Eye` for the
+/// upper pair and `Back` / `Nrvs` for the lower pair so each side reads
+/// at the same visual weight.
+private struct OffBodyAnchor: Identifiable {
+    let part: BodyPart
+    let label: String
+    let x: CGFloat
+    let y: CGFloat
+    let size: CGFloat
 
-    static let regions: [BodyRegion] = [
-        // Eyes float above the head, Wrayth-style.
-        BodyRegion(part: .leftEye,  x: 0.32, y: 0.05, w: 0.10, h: 0.06, kind: .circle),
-        BodyRegion(part: .rightEye, x: 0.68, y: 0.05, w: 0.10, h: 0.06, kind: .circle),
+    var id: BodyPart { part }
 
-        // Head & neck — small head, thin neck connecting to chest.
-        BodyRegion(part: .head,     x: 0.50, y: 0.16, w: 0.18, h: 0.13, kind: .circle),
-        BodyRegion(part: .neck,     x: 0.50, y: 0.255, w: 0.07, h: 0.04, kind: .rounded),
-
-        // Torso — chest is narrower so arms clearly sit beside it.
-        BodyRegion(part: .chest,    x: 0.50, y: 0.36, w: 0.22, h: 0.16, kind: .rounded),
-        BodyRegion(part: .abdomen,  x: 0.50, y: 0.51, w: 0.18, h: 0.09, kind: .rounded),
-        BodyRegion(part: .back,     x: 0.50, y: 0.31, w: 0.05, h: 0.025, kind: .rounded),
-        BodyRegion(part: .nsys,     x: 0.50, y: 0.44, w: 0.05, h: 0.025, kind: .rounded),
-
-        // Arms pushed outward with a clear gap from the torso.
-        BodyRegion(part: .leftArm,  x: 0.20, y: 0.42, w: 0.10, h: 0.26, kind: .capsule),
-        BodyRegion(part: .rightArm, x: 0.80, y: 0.42, w: 0.10, h: 0.26, kind: .capsule),
-        BodyRegion(part: .leftHand,  x: 0.18, y: 0.61, w: 0.11, h: 0.07, kind: .circle),
-        BodyRegion(part: .rightHand, x: 0.82, y: 0.61, w: 0.11, h: 0.07, kind: .circle),
-
-        // Legs with a clear central gap.
-        BodyRegion(part: .leftLeg,  x: 0.40, y: 0.78, w: 0.11, h: 0.32, kind: .capsule),
-        BodyRegion(part: .rightLeg, x: 0.60, y: 0.78, w: 0.11, h: 0.32, kind: .capsule),
+    static let all: [OffBodyAnchor] = [
+        OffBodyAnchor(part: .leftEye,  label: "L.Eye", x: 0.16, y: 0.11, size: 18),
+        OffBodyAnchor(part: .rightEye, label: "R.Eye", x: 0.84, y: 0.11, size: 18),
+        OffBodyAnchor(part: .back,     label: "Back",  x: 0.16, y: 0.82, size: 18),
+        OffBodyAnchor(part: .nsys,     label: "Nrvs",  x: 0.84, y: 0.82, size: 18),
     ]
 }

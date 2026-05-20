@@ -13,7 +13,6 @@ struct CommandTextField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String
     var isEnabled: Bool
-    var fontSize: CGFloat
     var foregroundColor: NSColor
     var insertionPointColor: NSColor
     var shouldFocus: Bool
@@ -23,6 +22,10 @@ struct CommandTextField: NSViewRepresentable {
     var onOptionReturn:  () -> Void
     var onUpArrow:       () -> Void
     var onDownArrow:     () -> Void
+
+    /// User-controlled font size, sourced from the `\.fontSize` environment
+    /// (set once at ContentView's root, overridden per-pane where needed).
+    @Environment(\.fontSize) private var fontSize: Double
 
     func makeNSView(context: Context) -> CommandNSTextField {
         let field = CommandNSTextField()
@@ -46,7 +49,7 @@ struct CommandTextField: NSViewRepresentable {
         }
         field.placeholderString = placeholder
         field.isEnabled = isEnabled
-        field.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        field.font = NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
         field.textColor = foregroundColor
         field.customInsertionPointColor = insertionPointColor
         context.coordinator.parent = self
@@ -231,8 +234,18 @@ final class CommandNSTextField: NSTextField {
     }
 
     private func applyInsertionPointColor() {
-        if let editor = currentEditor() as? NSTextView {
-            editor.insertionPointColor = customInsertionPointColor
-        }
+        guard let editor = currentEditor() as? NSTextView else { return }
+        editor.insertionPointColor = customInsertionPointColor
+        // Field editors inherit selection styling from the field's
+        // backgroundColor + appearance. With `drawsBackground = false`
+        // and a clear backgroundColor (so the dark game-theme shows
+        // through), macOS 26 ends up drawing the selection rect at
+        // ~0 alpha — selected text looks invisible against the dark
+        // background. Re-asserting the system selection colours here
+        // makes the highlight legible without disturbing anything else.
+        editor.selectedTextAttributes = [
+            .backgroundColor: NSColor.selectedTextBackgroundColor,
+            .foregroundColor: NSColor.selectedTextColor
+        ]
     }
 }

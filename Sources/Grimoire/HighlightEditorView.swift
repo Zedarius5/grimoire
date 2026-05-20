@@ -302,21 +302,25 @@ private struct HighlightDetail: View {
         }
     }
 
-    /// Renders a canned sample paragraph through the very same highlight
+    /// Renders a canned sample paragraph through the very same NSTextView
     /// pipeline the live game feed uses, with this draft rule pinned in.
+    /// Using the real renderer means the preview is byte-identical to what
+    /// the user sees in-game — no parallel rendering path to keep in sync.
     private var previewBlock: some View {
         let sampleLines = HighlightPreviewSamples.lines(featuring: text)
-        return VStack(alignment: .leading, spacing: 2) {
-            ForEach(sampleLines.indices, id: \.self) { i in
-                LineView(line: sampleLines[i], fontSize: 13)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // `revision` only needs to change when sampleLines change; any
+        // draftHighlight change (color, flags) is picked up by
+        // StoryTextView's separate `highlightHash` and forces a rebuild.
+        return StoryTextView(
+            lines: sampleLines,
+            revision: sampleLines.count,
+            highlights: [draftHighlight],
+            onLinkClick: { _ in }
+        )
+        .frame(height: 140)
         .background(GameTheme.background)
         .overlay(Rectangle().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
-        .environment(\.highlights, [draftHighlight])
+        .environment(\.fontSize, 13)
         .environment(\.colorScheme, .dark)
     }
 }

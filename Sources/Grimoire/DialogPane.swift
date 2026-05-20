@@ -17,9 +17,10 @@ struct TimerBarConfig: Equatable {
 /// top-to-bottom. Each widget's `width` is respected proportionally when set.
 struct DialogPane: View {
     let dialog: Dialog
-    let fontSize: Double
     let onCommand: (String) -> Void
     var timerConfig: TimerBarConfig = .wrayth
+
+    @Environment(\.fontSize) private var fontSize
     /// Optional wound state — when set, renders a `BodyDiagram` at the top
     /// of the pane (used for the UberBar dialog that emits per-body-part
     /// `<image>` widgets).
@@ -193,10 +194,14 @@ struct DialogPane: View {
         return max(32, CGFloat(rows.count) * 18 + 8)
     }
 
-    /// Should track the BodyDiagram's `maxHeight` in BodyDiagram.swift.
-    private static let bodyDiagramHeight: CGFloat = 120
+    /// Should track `BodyDiagram.totalSize` in BodyDiagram.swift. The
+    /// paperdoll refactor (2026-05-20) grew the widget from 80×120 to
+    /// 110×150; labeled off-body pips (L.Eye, R.Eye, Back, Nrvs) live
+    /// inside the silhouette frame in the dead space above the
+    /// shoulders and beside the legs.
+    private static let bodyDiagramHeight: CGFloat = 150
 
-    private static let bodyDiagramWidth: CGFloat = 80
+    private static let bodyDiagramWidth: CGFloat = 110
 
     /// Leading rows that should sit alongside the body diagram — only the
     /// initial label-only rows (no progressBars). As soon as we hit a row
@@ -278,7 +283,6 @@ struct DialogPane: View {
             ForEach(widgets.indices, id: \.self) { idx in
                 DialogWidgetView(
                     widget: widgets[idx],
-                    fontSize: fontSize,
                     width: widths[idx],
                     timerConfig: timerConfig,
                     elapsedSinceUpdate: elapsedSinceUpdate,
@@ -330,11 +334,12 @@ private struct WidthModifier: ViewModifier {
 
 private struct DialogWidgetView: View {
     let widget: DialogWidget
-    let fontSize: Double
     let width: CGFloat?
     let timerConfig: TimerBarConfig
     let elapsedSinceUpdate: TimeInterval
     let onCommand: (String) -> Void
+
+    @Environment(\.fontSize) private var fontSize
 
     var body: some View {
         switch widget {
