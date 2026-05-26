@@ -14,6 +14,7 @@ struct OptionsPopover: View {
 
     @EnvironmentObject var macros: MacroEngine
     @EnvironmentObject var highlights: HighlightStore
+    @EnvironmentObject var spellPresets: SpellPresetStore
     @Environment(\.openWindow) private var openWindow
 
     @AppStorage("grimoire.macroThreshold") private var macroThreshold: Int = 3
@@ -131,6 +132,25 @@ struct OptionsPopover: View {
                         .foregroundStyle(.secondary)
                 }
                 Text("Paint text spans (or whole lines) with custom fg/bg. Import Wrayth XML or build them in the editor.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Spell Presets").font(.subheadline.bold())
+                HStack {
+                    Button("Open editor…") {
+                        showingOptions = false
+                        openWindow(id: "spell-presets")
+                    }
+                    Spacer()
+                    Text("\(spellPresets.totalPresetCount) presets loaded")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Rename, recolour, resize, hide individual Buffs / Active Spells / Cooldowns / Debuffs bars. Picks up active spells from your session.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

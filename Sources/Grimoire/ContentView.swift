@@ -12,7 +12,10 @@ extension Notification.Name {
 }
 
 struct ContentView: View {
-    @StateObject private var client = LichClient()
+    // LichClient is app-level so secondary windows (e.g. the Spell
+    // Presets editor's active-bars picker) can share the same live
+    // state. Ownership lives in GrimoireApp via @StateObject.
+    @EnvironmentObject private var client: LichClient
     @StateObject private var lich = LichProcess()
     @EnvironmentObject private var macros: MacroEngine
     @EnvironmentObject private var highlights: HighlightStore
@@ -60,6 +63,17 @@ struct ContentView: View {
 
     private func panes(in region: PaneRegion) -> [PaneSpec] {
         panes.filter { $0.region == region }
+    }
+
+    /// Stream ids that should reroute to `"main"` because their pane
+    /// is hidden and the user opted in to fallthrough. Dialog-source
+    /// panes are skipped — those carry widget data, not chat lines.
+    private func streamFallthroughIds(in panes: [PaneSpec]) -> Set<String> {
+        var ids: Set<String> = []
+        for pane in panes where pane.region == .hidden && pane.fallthroughToMainWhenHidden {
+            if case .stream(let id) = pane.source { ids.insert(id) }
+        }
+        return ids
     }
 
     /// Looks up the timer-bar window (in seconds) for a given dialog id.
@@ -148,11 +162,16 @@ struct ContentView: View {
             client.onLaunchURL = { url in
                 _ = NSWorkspace.shared.open(url)
             }
+            // Seed the stream-fallthrough list on launch so panes that
+            // were hidden + flagged in the persisted config take effect
+            // immediately, without waiting for the next `panes` mutation.
+            client.setStreamFallthroughIds(streamFallthroughIds(in: panes))
         }
         .onChange(of: panes) { _, newValue in
             if let profile = activeProfile {
                 Preferences.savePanes(newValue, account: profile.account, character: profile.character)
             }
+            client.setStreamFallthroughIds(streamFallthroughIds(in: newValue))
         }
         .onChange(of: paneSizes) { _, newValue in
             if let profile = activeProfile {

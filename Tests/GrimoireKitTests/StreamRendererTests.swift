@@ -98,17 +98,25 @@ struct StreamRendererTests {
         #expect(runs.contains { $0.text == "a giant rat" && $0.style.monsterbold })
     }
 
-    @Test("speech preset suppresses inner <a> links")
-    func speechPresetSuppressesLinks() {
+    @Test("speech preset suppresses <d> direction links but keeps <a> entity links")
+    func speechPresetSuppressesDirectionLinksOnly() {
         let r = StreamRenderer()
+        // `<d>` wraps the speech verb ("ask") -- Stormfront's menu popup
+        // for these is noise, so we suppress them inside speech presets.
+        // `<a>` wraps player/creature names -- we keep those clickable so
+        // you can target the named NPC straight from chat.
         let events = r.render(
-            line: "<preset id='speech'>You <a exist='1' noun='ask'>ask</a>, \"hello\"</preset>"
+            line: "<preset id='speech'>You <d cmd='ask'>ask</d> <a exist='1' noun='Alice'>Alice</a>, \"hello\"</preset>"
         )
         let runs = events.first?.line.runs ?? []
-        // No run inside the speech preset should carry a link.
-        #expect(runs.allSatisfy { $0.style.link == nil })
-        // The styleId on those runs should be the speech preset.
-        #expect(runs.contains { $0.style.styleId == "speech" })
+        // The verb (<d>) loses its link — and since adjacent runs with
+        // the same style merge, "ask" ends up inside a larger run like
+        // "You ask " with style.link == nil.
+        #expect(runs.contains { $0.text.contains("ask") && $0.style.link == nil })
+        // The name (<a>) keeps its entity link.
+        #expect(runs.contains { $0.text == "Alice" && $0.style.link?.kind == .entity })
+        // Every run carries the speech styleId.
+        #expect(runs.allSatisfy { $0.style.styleId == "speech" })
     }
 
     @Test("nested <b><b> preserves bold across one </b>")

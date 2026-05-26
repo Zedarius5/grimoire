@@ -138,7 +138,15 @@ struct VitalsBar: View {
 struct RoundtimeBricks: View {
     let state: GameState
 
+    /// Bumped by the 10Hz timer purely as a re-render trigger; the
+    /// actual countdown math reads `Date()` in `remainingSeconds`, so
+    /// a stale `now` after an idle gap can't produce a wrong brick
+    /// count when a fresh RT arrives.
     @State private var now: Date = Date()
+    /// Whether the previous tick saw at least one active counter.
+    /// Lets us fire one extra tick after active → inactive so the
+    /// final "remaining = 0" render goes out before we go dormant.
+    @State private var wasActive: Bool = false
 
     private static let hardColor    = Color(red: 0.92, green: 0.16, blue: 0.16)
     private static let castColor    = Color(red: 0.26, green: 0.48, blue: 1.00)
@@ -156,7 +164,16 @@ struct RoundtimeBricks: View {
         contents
             .frame(height: Self.totalHeight, alignment: .leading)
             .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { tick in
-                now = tick
+                // Only invalidate body when something's actually
+                // counting — at-idle profiling showed the always-on
+                // 10Hz tick burning ~5% CPU on phantom SwiftUI
+                // transactions. `wasActive` lets the trailing
+                // active → inactive tick still fire so the final
+                // "0 bricks" render goes out before we go dormant.
+                let active = remainingSeconds(until: state.roundtimeEnd) > 0
+                          || remainingSeconds(until: state.castTimeEnd) > 0
+                if active || wasActive { now = tick }
+                wasActive = active
             }
     }
 
@@ -191,7 +208,12 @@ struct RoundtimeBricks: View {
 
     private func remainingSeconds(until end: TimeInterval?) -> Int {
         guard let end else { return 0 }
-        return max(0, Int(ceil(end - now.timeIntervalSince1970)))
+        // Read wall-clock directly. Using `now` (the @State) instead
+        // would mean a fresh RT arriving after a long idle gap would
+        // render against stale time and explode the brick count
+        // (`ceil(newEnd - stale_now)` instead of the few seconds the
+        // server actually intends).
+        return max(0, Int(ceil(end - Date().timeIntervalSince1970)))
     }
 }
 

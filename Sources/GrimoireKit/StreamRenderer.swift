@@ -187,21 +187,27 @@ public final class StreamRenderer {
         let isMonsterbold = monsterboldDepth > 0
             || styleStack.contains("monsterbold")
 
-        // Suppress `<a>`/`<d>` links inside speech-family presets.
-        // Stormfront wraps speech adverbs (e.g. "squeakily") and verbs
-        // ("ask") in `<a>` tags as part of its echo of the user's own
-        // command — clicking them pops a menu of actions on whatever
-        // noun the server has in context, which is almost never useful.
-        // Wrayth doesn't surface those clicks either; this matches.
+        // Inside speech-family presets, suppress *direction*-kind links
+        // (`<d>`) but keep *entity*-kind links (`<a>`). Stormfront wraps
+        // speech adverbs/verbs ("squeakily", "ask") in `<d cmd="...">`
+        // tags whose menus are noise — those are the suppression target.
+        // Player and creature names mentioned IN the spoken text use
+        // `<a noun="..." exist="...">` and should remain clickable so
+        // you can target them straight from chat.
         let inSpeechFamily = styleStack.contains(where: {
             $0 == "speech" || $0 == "whisper" || $0 == "thought"
         })
+        let effectiveLink: LinkRef? = {
+            guard let top = linkStack.last else { return nil }
+            if inSpeechFamily && top.kind == .direction { return nil }
+            return top
+        }()
 
         return RunStyle(
             bold: boldDepth > 0 || isMonsterbold,
             monsterbold: isMonsterbold,
             styleId: styleStack.last,
-            link: inSpeechFamily ? nil : linkStack.last,
+            link: effectiveLink,
             isPrompt: promptDepth > 0
         )
     }
@@ -503,10 +509,17 @@ public final class StreamRenderer {
                 }
             }
             if let dialogId = activeDialogId {
+                let barId = attrs["id"] ?? ""
+                let barText = attrs["text"] ?? ""
+                // Persist a server-supplied name for this id so the
+                // editor and the bar's `displayText` fallback can label
+                // long-id cooldowns that Lich's `effect-list.xml`
+                // doesn't carry. Cheap when unchanged (see `record`).
+                SpellNameDatabase.shared.record(id: barId, name: barText)
                 upsertWidget(.progressBar(
-                    id: attrs["id"] ?? "",
+                    id: barId,
                     value: pctValue,
-                    text: attrs["text"] ?? "",
+                    text: barText,
                     time: attrs["time"],
                     layout: WidgetLayout.parse(attrs)
                 ), in: dialogId)

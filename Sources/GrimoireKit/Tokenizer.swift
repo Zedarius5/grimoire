@@ -161,12 +161,12 @@ private struct Scanner {
                     advance()
                     let value = consumeWhile { $0 != quote }
                     _ = consumeIf(quote)
-                    attrs[name] = value
+                    attrs[name] = decodeXMLEntities(value)
                 } else {
                     let value = consumeWhile { ch in
                         !ch.isWhitespace && ch != ">" && ch != "/"
                     }
-                    attrs[name] = value
+                    attrs[name] = decodeXMLEntities(value)
                 }
             } else {
                 attrs[name] = ""
@@ -174,4 +174,25 @@ private struct Scanner {
         }
         return attrs
     }
+}
+
+/// XML attribute values arrive escaped (`wyrm&apos;s heart`), so every
+/// attribute-rendered string has to be decoded before display. Text
+/// content is handled separately via the tokenizer's `.entityRef`
+/// tokens + `StreamRenderer.decodeEntity`, so this only fires for the
+/// attribute path.
+///
+/// `&amp;` is decoded LAST so we don't double-decode sequences like
+/// `&amp;apos;` (which arrives wanting to be the literal text `&apos;`,
+/// not the apostrophe).
+private func decodeXMLEntities(_ s: String) -> String {
+    guard s.contains("&") else { return s }
+    var out = s
+    out = out.replacingOccurrences(of: "&apos;", with: "'")
+    out = out.replacingOccurrences(of: "&quot;", with: "\"")
+    out = out.replacingOccurrences(of: "&lt;",   with: "<")
+    out = out.replacingOccurrences(of: "&gt;",   with: ">")
+    out = out.replacingOccurrences(of: "&nbsp;", with: "\u{00A0}")
+    out = out.replacingOccurrences(of: "&amp;",  with: "&")
+    return out
 }

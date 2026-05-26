@@ -21,6 +21,11 @@ struct DialogPane: View {
     var timerConfig: TimerBarConfig = .wrayth
 
     @Environment(\.fontSize) private var fontSize
+    /// Needed at the pane level (not just the row level) so `contentHeight`
+    /// can ask for the resolved per-spell `barHeight` and report the
+    /// pane's true intrinsic height — otherwise ScrollView under-sizes
+    /// and Active Spells / Cooldowns won't scroll when full.
+    @EnvironmentObject private var spellPresets: SpellPresetStore
     /// Optional wound state — when set, renders a `BodyDiagram` at the top
     /// of the pane (used for the UberBar dialog that emits per-body-part
     /// `<image>` widgets).
@@ -55,9 +60,14 @@ struct DialogPane: View {
         }
 
         if shouldSortByTime {
-            filtered.sort { lhs, rhs in
-                widgetTimeSeconds(lhs) < widgetTimeSeconds(rhs)
-            }
+            // Extract the sort key once per widget instead of twice
+            // per comparison. The old comparator called
+            // `widgetTimeSeconds` (→ `parseDurationSeconds` → string
+            // parse) on both sides, so a 20-bar pane did ~170 parses
+            // per sort and SwiftUI was hitting this multiple times
+            // per frame.
+            let keyed = filtered.map { (widget: $0, key: widgetTimeSeconds($0)) }
+            filtered = keyed.sorted { $0.key < $1.key }.map(\.widget)
         }
 
         return filtered
@@ -87,17 +97,7 @@ struct DialogPane: View {
     }
 
     private func parseDurationSeconds(_ s: String) -> Int? {
-        let trimmed = s.trimmingCharacters(in: .whitespaces)
-        if trimmed.contains(":") {
-            let parts = trimmed.split(separator: ":").map { Int($0) ?? 0 }
-            switch parts.count {
-            case 3: return parts[0] * 3600 + parts[1] * 60 + parts[2]
-            case 2: return parts[0] * 60 + parts[1]
-            default: return nil
-            }
-        }
-        if trimmed.hasSuffix("s") { return Int(trimmed.dropLast()) }
-        return Int(trimmed)
+        DurationFormat.parse(s)
     }
 
     /// Widgets grouped into rows. The Stormfront protocol chains widgets
@@ -179,19 +179,44 @@ struct DialogPane: View {
         .environment(\.colorScheme, .dark)
     }
 
-    /// Height estimate the ScrollView's GeometryReader uses as a minimum so
-    /// the content lays out at the right size. In the wounds layout, the
-    /// label-only rows live *beside* the body diagram (so they don't add to
-    /// vertical extent) — only the body diagram and the bars-below section
-    /// stack vertically. Prevously this added a flat +180 which left a large
-    /// dead-zone at the bottom of UberBar after the diagram was slimmed down.
+    /// Height estimate the ScrollView's GeometryReader uses as a minimum
+    /// so the content lays out at the right size. Walks each row and
+    /// sums per-widget heights so a pane with tall progressBars (per-
+    /// spell `barHeight` overrides on Active Spells / Cooldowns etc.)
+    /// reports its true intrinsic height — otherwise the ScrollView
+    /// thinks it fits when it doesn't, and won't scroll.
     private var contentHeight: CGFloat {
         if wounds != nil {
+            // Label-only rows sit BESIDE the body diagram so they don't
+            // add to vertical extent; only the body diagram and the
+            // bars-below section stack vertically.
             let topBlock = max(Self.bodyDiagramHeight, CGFloat(sideBySideRows.count) * 18)
-            let bottomBlock = CGFloat(remainingRows.count) * 20
+            let bottomBlock = remainingRows.reduce(0.0) { $0 + rowHeight($1) }
             return max(32, topBlock + bottomBlock + 12)
         }
-        return max(32, CGFloat(rows.count) * 18 + 8)
+        let total = rows.reduce(0.0) { $0 + rowHeight($1) }
+        return max(32, total + 8)
+    }
+
+    /// Tallest widget in a row + 1pt vstack spacing. Mirrors the actual
+    /// rendered heights so contentHeight doesn't underestimate.
+    private func rowHeight(_ widgets: [DialogWidget]) -> CGFloat {
+        let window = DialogWindow(rawValue: dialog.id)
+        let perWidget: [CGFloat] = widgets.map { widget in
+            switch widget {
+            case .progressBar(let id, _, _, _, _):
+                let resolved: ResolvedSpellStyling = window
+                    .map { spellPresets.resolve(spellId: id, in: $0) } ?? .empty
+                return CGFloat(resolved.barHeight ?? 18)
+            case .label, .link:
+                return 16
+            case .separator:
+                return 8
+            case .image:
+                return 0   // filtered out in displayableWidgets
+            }
+        }
+        return (perWidget.max() ?? 18) + 1   // +1 for VStack spacing
     }
 
     /// Should track `BodyDiagram.totalSize` in BodyDiagram.swift. The
@@ -225,8 +250,22 @@ struct DialogPane: View {
 
     @ViewBuilder
     private func woundsLayout(wounds: Wounds, geo: GeometryProxy, elapsedSinceUpdate: TimeInterval) -> some View {
-        let topRows = sideBySideRows
-        let rest = remainingRows
+        // Compute the row partition once per layout pass — the old
+        // path called `rows` three times (once from `sideBySideRows`,
+        // twice from `remainingRows` via `sideBySideRows`+`rows`),
+        // each of which ran the displayableWidgets filter+sort.
+        let partition: (top: [[DialogWidget]], rest: [[DialogWidget]]) = {
+            let all = rows
+            let split = all.firstIndex(where: { row in
+                row.contains { widget in
+                    if case .progressBar = widget { return true }
+                    return false
+                }
+            }) ?? all.count
+            return (Array(all.prefix(split)), Array(all.dropFirst(split)))
+        }()
+        let topRows = partition.top
+        let rest = partition.rest
         let rightWidth = max(120, geo.size.width - Self.bodyDiagramWidth - 12)
 
         VStack(alignment: .leading, spacing: 3) {
@@ -260,9 +299,14 @@ struct DialogPane: View {
 
     @ViewBuilder
     private func plainLayout(geo: GeometryProxy, elapsedSinceUpdate: TimeInterval) -> some View {
+        // Cache `rows` once per layout pass — otherwise both
+        // `rows.indices` and the `rows[rowIdx]` subscript inside the
+        // ForEach re-evaluate the computed property, each call running
+        // the displayableWidgets filter + sort from scratch.
+        let allRows = rows
         VStack(alignment: .leading, spacing: 1) {
-            ForEach(rows.indices, id: \.self) { rowIdx in
-                rowView(rows[rowIdx],
+            ForEach(allRows.indices, id: \.self) { rowIdx in
+                rowView(allRows[rowIdx],
                         paneWidth: geo.size.width - 8,
                         elapsedSinceUpdate: elapsedSinceUpdate)
             }
@@ -279,6 +323,10 @@ struct DialogPane: View {
         elapsedSinceUpdate: TimeInterval
     ) -> some View {
         let widths = distributedWidths(for: widgets, paneWidth: paneWidth)
+        // Map the Stormfront dialog id to one of the four known preset
+        // windows. Returns nil for dialogs that don't have a window
+        // (e.g. UberBar), in which case preset resolution is a no-op.
+        let presetWindow = DialogWindow(rawValue: dialog.id)
         HStack(spacing: 4) {
             ForEach(widgets.indices, id: \.self) { idx in
                 DialogWidgetView(
@@ -286,7 +334,8 @@ struct DialogPane: View {
                     width: widths[idx],
                     timerConfig: timerConfig,
                     elapsedSinceUpdate: elapsedSinceUpdate,
-                    onCommand: onCommand
+                    onCommand: onCommand,
+                    presetWindow: presetWindow
                 )
             }
         }
@@ -338,8 +387,12 @@ private struct DialogWidgetView: View {
     let timerConfig: TimerBarConfig
     let elapsedSinceUpdate: TimeInterval
     let onCommand: (String) -> Void
+    /// Which preset window (if any) backs this row's dialog. Nil for
+    /// non-managed dialogs like UberBar — skips preset resolution.
+    let presetWindow: DialogWindow?
 
     @Environment(\.fontSize) private var fontSize
+    @EnvironmentObject private var spellPresets: SpellPresetStore
 
     var body: some View {
         switch widget {
@@ -375,57 +428,88 @@ private struct DialogWidgetView: View {
             .buttonStyle(.plain)
 
         case .progressBar(let id, let value, let text, let time, _):
-            let remainingSeconds = liveRemainingSeconds(time)
-            let liveTime = remainingSeconds.map(formatDurationSeconds)
-                ?? (time?.trimmingCharacters(in: .whitespacesAndNewlines))
+            // Resolved styling pulls spell → group → window-default
+            // → hardcoded. `.empty` for dialogs we don't manage
+            // (e.g. UberBar) or spells with no overrides anywhere.
+            let resolved: ResolvedSpellStyling = presetWindow
+                .map { spellPresets.resolve(spellId: id, in: $0) }
+                ?? .empty
 
-            // Timer-style bars (Active Spells / Buffs / Cooldowns / Debuffs)
-            // get a fixed-window fill so the visual length actually means
-            // something. The window is per-dialog (configurable in Options).
-            // Bars without a `time` attribute (health/mana/etc.) always use
-            // the server's `value`. When `timerConfig.normalize` is off we
-            // also fall back to the server `value` for timer bars — that's
-            // the Wrayth/Stormfront default ("% of original duration").
-            let timerStyle = timerConfig.normalize && remainingSeconds != nil
-            let fillFraction: Double = {
-                if timerStyle, let secs = remainingSeconds {
-                    return min(1.0, Double(secs) / Double(timerConfig.windowSeconds))
-                }
-                return Double(max(0, min(100, value))) / 100.0
-            }()
-            let overflow = timerStyle && (remainingSeconds ?? 0) > timerConfig.windowSeconds
+            if resolved.hidden {
+                EmptyView()
+            } else {
+                let remainingSeconds = liveRemainingSeconds(time)
+                let liveTime = remainingSeconds.map(formatDurationSeconds)
+                    ?? (time?.trimmingCharacters(in: .whitespacesAndNewlines))
 
-            ZStack(alignment: .leading) {
-                GeometryReader { geo in
-                    Rectangle().fill(Color.black.opacity(0.4))
-                    Rectangle()
-                        .fill(barColor(for: id).opacity(0.65))
-                        .frame(width: geo.size.width * CGFloat(fillFraction))
-                }
-                HStack(spacing: 6) {
-                    if let liveTime, !liveTime.isEmpty {
-                        Text(liveTime)
-                            .font(.system(size: max(fontSize - 3, 9), design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .monospacedDigit()
+                // Effective window: a per-spell / group / default
+                // override (e.g. a single cooldown bar that should
+                // fill against 30s) takes precedence over the
+                // per-dialog default.
+                let effectiveWindow = resolved.fullBarSeconds ?? timerConfig.windowSeconds
+
+                let timerStyle = timerConfig.normalize && remainingSeconds != nil
+                let fillFraction: Double = {
+                    if timerStyle, let secs = remainingSeconds {
+                        return min(1.0, Double(secs) / Double(effectiveWindow))
                     }
-                    Text(text)
-                        .font(.system(size: fontSize - 2, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer()
-                    if overflow {
-                        Image(systemName: "chevron.right.2")
-                            .font(.system(size: max(fontSize - 4, 8), weight: .bold))
-                            .foregroundStyle(.white.opacity(0.75))
-                            .help("Remaining duration exceeds the 30-minute bar window")
+                    return Double(max(0, min(100, value))) / 100.0
+                }()
+                let overflow = timerStyle && (remainingSeconds ?? 0) > effectiveWindow
+
+                let resolvedBarColor = resolved.barColor
+                    .flatMap(Color.init(hex:))
+                    ?? barColor(for: id)
+                let resolvedTroughColor = resolved.troughColor
+                    .flatMap(Color.init(hex:))
+                    ?? Color.black.opacity(0.4)
+                let resolvedTextColor = resolved.textColor
+                    .flatMap(Color.init(hex:))
+                    ?? Color.white
+                let resolvedFontSize = resolved.fontSize ?? fontSize
+                let resolvedHeight: CGFloat = resolved.barHeight.map { CGFloat($0) } ?? 18
+                // Fallback chain: user override → server-supplied live
+                // text → name cache (Lich XML + previously observed
+                // bars, so cooldown ids that haven't fired this session
+                // still get labelled) → raw `text`.
+                let displayText: String = {
+                    if let custom = resolved.displayName, !custom.isEmpty { return custom }
+                    if !text.isEmpty, text != id { return text }
+                    return spellPresets.spellNames.name(forId: id) ?? text
+                }()
+
+                ZStack(alignment: .leading) {
+                    GeometryReader { geo in
+                        Rectangle().fill(resolvedTroughColor)
+                        Rectangle()
+                            .fill(resolvedBarColor)
+                            .frame(width: geo.size.width * CGFloat(fillFraction))
                     }
+                    HStack(spacing: 6) {
+                        if let liveTime, !liveTime.isEmpty {
+                            Text(liveTime)
+                                .font(.system(size: max(resolvedFontSize - 3, 9), design: .monospaced))
+                                .foregroundStyle(resolvedTextColor.opacity(0.85))
+                                .monospacedDigit()
+                        }
+                        Text(displayText)
+                            .font(.system(size: max(resolvedFontSize - 2, 9), design: .monospaced))
+                            .foregroundStyle(resolvedTextColor)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer()
+                        if overflow {
+                            Image(systemName: "chevron.right.2")
+                                .font(.system(size: max(resolvedFontSize - 4, 8), weight: .bold))
+                                .foregroundStyle(resolvedTextColor.opacity(0.75))
+                                .help("Remaining duration exceeds the bar window")
+                        }
+                    }
+                    .padding(.horizontal, 6)
                 }
-                .padding(.horizontal, 6)
+                .modifier(WidthModifier(width: width, height: resolvedHeight))
+                .clipShape(RoundedRectangle(cornerRadius: 3))
             }
-            .modifier(WidthModifier(width: width, height: 18))
-            .clipShape(RoundedRectangle(cornerRadius: 3))
 
         case .image:
             EmptyView()
@@ -477,27 +561,24 @@ private struct DialogWidgetView: View {
         return max(0, seconds - Int(elapsedSinceUpdate.rounded()))
     }
 
-    /// Parses "HH:MM:SS", "MM:SS", or "Ns" / plain integer seconds.
+    /// Parses durations the server sends on `<progressBar time="…">`.
+    /// Delegates to the shared `DurationFormat` helper so the editor's
+    /// custom-full-bar input and this live-render path agree on what
+    /// "3:30" or "5m" means.
     private func parseDurationSeconds(_ s: String) -> Int? {
-        let trimmed = s.trimmingCharacters(in: .whitespaces)
-        if trimmed.contains(":") {
-            let parts = trimmed.split(separator: ":").map { Int($0) ?? 0 }
-            switch parts.count {
-            case 3: return parts[0] * 3600 + parts[1] * 60 + parts[2]
-            case 2: return parts[0] * 60 + parts[1]
-            default: return nil
-            }
-        }
-        if trimmed.hasSuffix("s") { return Int(trimmed.dropLast()) }
-        return Int(trimmed)
+        DurationFormat.parse(s)
     }
 
     private func formatDurationSeconds(_ total: Int) -> String {
         let h = total / 3600
         let m = (total % 3600) / 60
         let s = total % 60
-        if h > 0 { return String(format: "%02d:%02d:%02d", h, m, s) }
-        return String(format: "%02d:%02d", m, s)
+        // Drop leading zeros on the leftmost component — no in-game
+        // spell ever runs more than 9 hours, so the extra width is
+        // dead pixels. Minutes and seconds keep their zero-pad so
+        // ":05" doesn't collapse to ":5".
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%d:%02d", m, s)
     }
 
     /// Bar fill color by id. Standard Stormfront vital ids get their canonical

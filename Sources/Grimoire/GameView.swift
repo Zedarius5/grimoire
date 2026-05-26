@@ -166,6 +166,6 @@ enum GameTheme {
     // (~30°+ apart) is what makes them feel "notably different"; staying
     // in the same family is what makes them feel cohesive.
     static let speech  = Color(red: 1.00, green: 0.68, blue: 0.78)  // warm coral pink — audible
-    static let whisper = Color(red: 0.78, green: 0.55, blue: 0.68)  // dusty rose, muted — quiet
+    static let whisper = Color(red: 0.60, green: 0.74, blue: 0.86)  // cool slate blue, muted — private/quiet (visually distinct from speech's warm pink)
     static let thought = Color(red: 0.78, green: 0.65, blue: 1.00)  // soft lavender — internal
 }

@@ -6,3 +6,7 @@ Package.resolved
 *.xcworkspace/xcuserdata/
 xcuserdata/
 DerivedData/
+
+# User-private Claude Code allowlist (project-shared rules live in
+# .claude/settings.json -- that one IS tracked).
+.claude/settings.local.json

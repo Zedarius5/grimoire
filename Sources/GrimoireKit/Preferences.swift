@@ -106,4 +106,55 @@ public enum Preferences {
         guard let data = defaults.data(forKey: kHighlights) else { return nil }
         return try? JSONDecoder().decode(HighlightConfig.self, from: data)
     }
+
+    // MARK: - Spell presets
+
+    private static let kSpellPresetsV1 = "grimoire.spellPresets.v1"
+    private static let kSpellPresetsV2 = "grimoire.spellPresets.v2"
+
+    public static func saveSpellPresets(_ config: SpellPresetConfig) {
+        guard let data = try? JSONEncoder().encode(config) else { return }
+        defaults.set(data, forKey: kSpellPresetsV2)
+    }
+
+    /// Loads v2 if present, falls back to migrating v1 (presets land in
+    /// the Buffs window — see `SpellPresetConfig.migrating(_:)`), and
+    /// finally returns nil if nothing's saved at all.
+    public static func loadSpellPresets() -> SpellPresetConfig? {
+        if let data = defaults.data(forKey: kSpellPresetsV2),
+           let v2 = try? JSONDecoder().decode(SpellPresetConfig.self, from: data) {
+            return v2
+        }
+        if let data = defaults.data(forKey: kSpellPresetsV1),
+           let v1 = try? JSONDecoder().decode(LegacySpellPresetConfigV1.self, from: data) {
+            let migrated = SpellPresetConfig.migrating(v1)
+            // Persist immediately as v2 so we don't keep paying the
+            // migration cost on every launch.
+            if let data = try? JSONEncoder().encode(migrated) {
+                defaults.set(data, forKey: kSpellPresetsV2)
+            }
+            return migrated
+        }
+        return nil
+    }
+
+    // MARK: - Observed spell names
+
+    private static let kObservedSpellNames = "grimoire.observedSpellNames.v1"
+
+    /// Names Grimoire has seen for spell ids in live `<progressBar>` widgets.
+    /// Populated by the stream parser; consumed by the editor and bar render
+    /// to label cooldowns / ability timers that Lich's `effect-list.xml`
+    /// doesn't cover (7-10 digit ids).
+    public static func loadObservedSpellNames() -> [String: String] {
+        guard let data = defaults.data(forKey: kObservedSpellNames),
+              let map = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        return map
+    }
+
+    public static func saveObservedSpellNames(_ map: [String: String]) {
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        defaults.set(data, forKey: kObservedSpellNames)
+    }
 }

@@ -80,7 +80,9 @@ struct WindowsPopover: View {
     }
 
     /// Column labels for the placement grid — small arrow glyphs above each
-    /// region's column of toggle dots, plus the eye-slash for the hidden slot.
+    /// region's column of toggle dots, the eye-slash for the hidden slot,
+    /// and a final "→ main" column for stream-source panes that want to
+    /// route to the story feed when hidden.
     private var gridHeaderRow: some View {
         HStack(spacing: 4) {
             Color.clear.frame(maxWidth: .infinity)  // name-column spacer
@@ -91,6 +93,11 @@ struct WindowsPopover: View {
                     .frame(width: 30, height: 18)
                     .help(region.displayName)
             }
+            Image(systemName: "arrow.turn.up.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .frame(width: 30, height: 18)
+                .help("Route to main story window when hidden (stream panes only)")
         }
     }
 
@@ -104,6 +111,40 @@ struct WindowsPopover: View {
             ForEach(Self.regionGridOrder) { region in
                 regionToggle(pane: pane, region: region)
             }
+            fallthroughToggle(pane: pane)
+        }
+    }
+
+    /// Per-pane "route to main when hidden" toggle. Only meaningful for
+    /// stream-source panes — dialog panes carry widget data, not lines,
+    /// so the slot stays as an empty spacer to keep columns aligned.
+    @ViewBuilder
+    private func fallthroughToggle(pane: Binding<PaneSpec>) -> some View {
+        if case .stream = pane.wrappedValue.source {
+            let isOn = pane.wrappedValue.fallthroughToMainWhenHidden
+            Button {
+                pane.fallthroughToMainWhenHidden.wrappedValue.toggle()
+            } label: {
+                Image(systemName: "arrow.turn.up.right")
+                    .font(.system(size: 11, weight: isOn ? .bold : .regular))
+                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+                    .frame(width: 30, height: 24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(isOn ? Color.accentColor.opacity(0.18) : Color.clear)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(
+                                isOn ? Color.accentColor.opacity(0.6) : Color.white.opacity(0.08),
+                                lineWidth: 0.5
+                            )
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Route this stream's lines to the main story window when this pane is hidden")
+        } else {
+            Color.clear.frame(width: 30, height: 24)
         }
     }
 

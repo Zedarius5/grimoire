@@ -72,6 +72,21 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
     private var renderer = StreamRenderer()
     private var byteBuffer = Data()
     private var mode: Mode = .raw
+    /// Stream ids whose lines should be rerouted into the `"main"`
+    /// buffer instead of their own (used to keep a hidden pane's
+    /// messages visible in the story feed). App layer sets this from
+    /// the current pane configuration via `setStreamFallthroughIds(_:)`.
+    /// Owned by `workQueue` — only read inside the parsing loop.
+    private var streamFallthroughIds: Set<String> = []
+
+    /// Updates the set of streams whose lines should be rerouted to
+    /// `"main"`. Safe to call from any thread; the actual mutation
+    /// hops onto `workQueue` so it doesn't race with parsing.
+    public func setStreamFallthroughIds(_ ids: Set<String>) {
+        workQueue.async { [weak self] in
+            self?.streamFallthroughIds = ids
+        }
+    }
 
     private let workQueue = DispatchQueue(
         label: "com.zedarius.Grimoire.LichClient",
@@ -351,8 +366,11 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
             guard !trimmed.isEmpty else { continue }
 
             for event in renderer.render(line: trimmed) {
-                if batches[event.streamId] == nil { orderedStreams.append(event.streamId) }
-                batches[event.streamId, default: []].append(event.line)
+                let target = streamFallthroughIds.contains(event.streamId)
+                    ? "main"
+                    : event.streamId
+                if batches[target] == nil { orderedStreams.append(target) }
+                batches[target, default: []].append(event.line)
             }
         }
 

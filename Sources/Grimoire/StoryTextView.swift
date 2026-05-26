@@ -38,6 +38,18 @@ struct StoryTextView: NSViewRepresentable {
         // few thousand lines. TextKit 1's flat layout-fragment cache makes
         // those queries O(log n) and stays responsive under bursty appends.
         let textView = NSTextView(usingTextLayoutManager: false)
+        // Swap in a layout manager that trims trailing whitespace from
+        // highlight background fills, so a match like "fat palm rat"
+        // that wraps after "fat" doesn't paint a box past the last
+        // visible glyph on the upper line.
+        if let oldLM = textView.layoutManager,
+           let container = textView.textContainer,
+           let storage = textView.textStorage {
+            let tightLM = TightBackgroundLayoutManager()
+            storage.removeLayoutManager(oldLM)
+            storage.addLayoutManager(tightLM)
+            tightLM.addTextContainer(container)
+        }
         textView.frame = NSRect(origin: .zero, size: scrollView.contentSize)
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(
@@ -114,6 +126,24 @@ struct StoryTextView: NSViewRepresentable {
         private var appliedRevision: Int = 0
         private var appliedFontSize: Double = 0
         private var appliedHighlightHash: Int = 0
+        /// True between scheduling and execution of an async
+        /// scroll-to-bottom hop. Coalesces back-to-back reconciles so
+        /// we don't call `scrollRangeToVisible` once per batch — that
+        /// AppKit path forces glyph layout each time and was costing
+        /// ~10% of main-thread CPU under busy game traffic.
+        private var scrollToBottomScheduled: Bool = false
+        /// Last known good scroll-y while the window was key. Used to
+        /// restore position on `NSWindow.didBecomeKeyNotification`
+        /// because AppKit sometimes resets the clipView's bounds.origin
+        /// to (0,0) during the key-state transition, scrolling the
+        /// user to the top of the doc on Cmd-Tab back.
+        private var lastKnownScrollY: CGFloat? = nil
+        /// Whether the user was parked at the bottom the last time we
+        /// observed scroll state. If true, becomeKey re-fires
+        /// scrollToBottom (so any new content that arrived while
+        /// backgrounded gets brought into view) instead of restoring
+        /// the absolute y-offset.
+        private var wasAtBottomAtLastObserve: Bool = true
 
         /// True while the user is actively dragging the scroll thumb or
         /// using a trackpad scroll. Suppresses auto-scroll-to-bottom so a
@@ -140,6 +170,13 @@ struct StoryTextView: NSViewRepresentable {
             highlights: [Highlight]
         ) {
             guard let textView, let storage = textView.textStorage else { return }
+            // Snapshot the current scroll position so the
+            // window-becomeKey observer has a recent value to restore
+            // if AppKit reset the clip view during a Cmd-Tab cycle.
+            if let sv = scrollView {
+                lastKnownScrollY = sv.contentView.bounds.origin.y
+                wasAtBottomAtLastObserve = isAtBottom
+            }
             let started = CFAbsoluteTimeGetCurrent()
             // Pre-reconcile scroll snapshot — captures any "blank zone"
             // state (gap < 0) before our mutations.
@@ -256,6 +293,22 @@ struct StoryTextView: NSViewRepresentable {
             appliedFontSize = fontSize
             appliedHighlightHash = highlightHash
 
+            // Force layout for just the currently-visible region. Storage
+            // mutations invalidate NSLayoutManager's glyph cache for the
+            // affected range; if the display cycle fires before AppKit
+            // lazy-lays-out those glyphs, the unfilled range paints as
+            // pane background — the "black holes inside the visible
+            // story" symptom that shows up around big container/INV
+            // dumps. Bounded by `visibleRect` so the cost is one
+            // screenful of layout, not the whole buffer.
+            if let layoutManager = textView.layoutManager,
+               let container = textView.textContainer {
+                layoutManager.ensureLayout(
+                    forBoundingRect: textView.visibleRect,
+                    in: container
+                )
+            }
+
             // Suppress auto-scroll while the user is actively dragging the
             // scroll thumb, or in the 400ms after they release. Without
             // this, a burst of lines mid-drag yanks the view to the bottom
@@ -263,21 +316,14 @@ struct StoryTextView: NSViewRepresentable {
             let userScrolledRecently = userScrolling
                 || Date().timeIntervalSince(lastUserScrollEndedAt) < 0.4
 
-            if wasAtBottom && !userScrolledRecently {
-                // Diagnostic: capture the mutation-end timestamp and a
-                // snapshot of layout state so `scrollToBottom` can log
-                // (a) how long the async hop took and (b) whether the
-                // visible bottom was still un-laid-out at scroll-fire
-                // time. If the visible bottom is past
-                // `firstUnlaidCharacterIndex`, AppKit can draw the
-                // un-laid region as background (the suspected source of
-                // the "black for a second" flash).
-                let mutationCompletedAt = CFAbsoluteTimeGetCurrent()
-                let mutationLayout = captureLayoutState()
+            if wasAtBottom && !userScrolledRecently, !scrollToBottomScheduled {
+                scrollToBottomScheduled = true
                 DispatchQueue.main.async { [weak self] in
-                    self?.scrollToBottom(
-                        mutationCompletedAt: mutationCompletedAt,
-                        mutationLayout: mutationLayout
+                    guard let self else { return }
+                    self.scrollToBottomScheduled = false
+                    self.scrollToBottom(
+                        mutationCompletedAt: nil,
+                        mutationLayout: nil
                     )
                 }
             }
@@ -302,22 +348,17 @@ struct StoryTextView: NSViewRepresentable {
                 )
             }
 
-            // Blank-screen diagnostic: log pre- and post-reconcile scroll
-            // state whenever something is suspicious — either the pre-state
-            // had a negative gap (clip was past the doc, the suspected
-            // "blank zone"), or the doc height changed meaningfully across
-            // this reconcile, or we did a front-trim (front-trims are the
-            // most-likely culprit since they shrink the doc).
-            let postState = captureScrollState()
-            let preHadBlank = (preState?.gap ?? 0) < -1
-            let postHasBlank = (postState?.gap ?? 0) < -1
-            let docShifted: Bool = {
-                guard let p = preState, let q = postState else { return false }
-                return abs(p.docH - q.docH) > 1
-            }()
-            if preHadBlank || postHasBlank || didFrontTrim || docShifted {
-                if let p = preState { appLog("StoryTextView", p.description("pre "), level: .info) }
-                if let q = postState { appLog("StoryTextView", q.description("post"), level: .info) }
+            // Blank-screen diagnostic: log when the *pre*-state already
+            // shows a negative gap (clip past the doc — the suspected
+            // "blank zone"). We deliberately don't capture a post-state
+            // here: `captureScrollState()` reads `doc.frame.height`,
+            // which on a just-mutated NSTextView forces a full
+            // re-layout of the storage (hundreds of ms once the buffer
+            // hits cap). The blank-screen investigation that justified
+            // the cost is closed, so the per-reconcile capture is now
+            // pure overhead.
+            if (preState?.gap ?? 0) < -1, let p = preState {
+                appLog("StoryTextView", p.description("pre "), level: .info)
             }
         }
 
@@ -429,6 +470,10 @@ struct StoryTextView: NSViewRepresentable {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.userScrolling = false
+                    // Snapshot the scroll position the user settled on,
+                    // so Cmd-Tab restore has a fresh reference point.
+                    self.lastKnownScrollY = scrollView.contentView.bounds.origin.y
+                    self.wasAtBottomAtLastObserve = self.isAtBottom
                     // If the user released *at* the bottom, treat that as a
                     // deliberate "follow again" gesture: skip the grace
                     // window so the next reconcile auto-scrolls, and snap
@@ -438,6 +483,48 @@ struct StoryTextView: NSViewRepresentable {
                         self.scrollToBottom()
                     } else {
                         self.lastUserScrollEndedAt = Date()
+                    }
+                }
+            })
+
+            // Window key-state observers. AppKit sometimes scrolls the
+            // clip view back to (0,0) when the window becomes key on
+            // Cmd-Tab back; restore the position we observed before
+            // the resign (or fire scrollToBottom if the user was
+            // following the bottom). `attachScrollObservers` runs
+            // during makeNSView, before SwiftUI has placed the view
+            // in a window hierarchy, so `scrollView.window` is nil
+            // here. Observe `object: nil` and filter on the
+            // notification's source so we catch the window once it
+            // exists.
+            // We don't need a didResignKey observer — `lastKnownScrollY`
+            // is kept fresh by the scroll-end handler above and by
+            // reconcile's pre-mutation snapshot. By the time the
+            // window resigns key, the latest user scroll position is
+            // already captured. We deliberately don't reference `note`
+            // inside the MainActor block — NSNotification isn't
+            // Sendable and Swift 6 flags the capture.
+            scrollObservers.append(NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let sv = self.scrollView,
+                          sv.window?.isKeyWindow == true
+                    else { return }
+                    // Restore *after* AppKit's own key-state layout
+                    // pass — otherwise our scroll() gets clobbered.
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, let sv = self.scrollView else { return }
+                        if self.wasAtBottomAtLastObserve {
+                            self.scrollToBottom()
+                        } else if let y = self.lastKnownScrollY,
+                                  abs(sv.contentView.bounds.origin.y - y) > 1 {
+                            sv.contentView.scroll(to: NSPoint(x: 0, y: y))
+                            sv.reflectScrolledClipView(sv.contentView)
+                        }
                     }
                 }
             })
@@ -460,48 +547,27 @@ struct StoryTextView: NSViewRepresentable {
             // past a few thousand lines.
             guard let textView, let storage = textView.textStorage else { return }
 
-            // Diagnostic: capture layout state at scroll-fire time, before
-            // any further mutation. We then have three snapshots:
-            //   mutationLayout  — right after the storage mutation
-            //   preFireLayout   — right before scrollRangeToVisible runs
-            //                     (i.e. the moment AppKit *could* have drawn
-            //                     between the reconcile returning and us
-            //                     getting here from the async hop)
-            // If `visibleBottomUnlaid` is true at preFire, that's the
-            // smoking-gun condition for the "black for a second" flash —
-            // visible glyphs weren't generated before drawing.
-            if let preFire = captureLayoutState() {
-                let delayMs: String
-                if let started = mutationCompletedAt {
-                    delayMs = String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - started) * 1000)
-                } else {
-                    delayMs = "n/a"
-                }
-                let mutUnlaid = mutationLayout?.visibleBottomUnlaid ?? false
-                if mutUnlaid || preFire.visibleBottomUnlaid {
-                    appLog(
-                        "StoryTextView",
-                        "BLACKFLASH suspect: hopDelay=\(delayMs)ms"
-                        + " | mut[unlaid=\(mutationLayout?.firstUnlaid ?? -1)"
-                        + " visible=\(mutationLayout?.visibleCharStart ?? -1)..\(mutationLayout?.visibleCharEnd ?? -1)"
-                        + " storage=\(mutationLayout?.storageLength ?? -1)]"
-                        + " preFire[unlaid=\(preFire.firstUnlaid)"
-                        + " visible=\(preFire.visibleCharStart)..\(preFire.visibleCharEnd)"
-                        + " storage=\(preFire.storageLength)]"
-                        + " mutUnlaid=\(mutUnlaid) preFireUnlaid=\(preFire.visibleBottomUnlaid)",
-                        level: .info
-                    )
-                }
-            }
+            // No diagnostic captures here on purpose. The previous
+            // `captureLayoutState()` + `captureScrollState()` pair read
+            // `doc.frame.height` and forced a full layout pass over
+            // every glyph in the storage — once the buffer hit its cap
+            // and front-trim fired on every reconcile, that meant a
+            // 500-700ms layout per line on the main thread. The
+            // blank-screen investigation that needed those snapshots
+            // is closed; arguments are kept on the signature so the
+            // observer-driven entry points still compile.
+            _ = mutationCompletedAt
+            _ = mutationLayout
 
-            // Log the state we're correcting from, but only when it's
-            // interesting — i.e., the clip is in the blank zone past the
-            // doc end (gap < -1). Otherwise we'd spam the log on every
-            // sticky-follow tick.
-            if let state = captureScrollState(), state.gap < -1 {
-                appLog("StoryTextView", state.description("BLANK→scroll"), level: .info)
-            }
-            textView.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
+            // Target the last real character (the trailing `\n` of the
+            // final laid-out line) instead of `storage.length`. The
+            // one-past-the-end position lives in the extra line
+            // fragment that `TightBackgroundLayoutManager` deliberately
+            // zeroes — pointing AppKit there resolves to rect (0,0)
+            // and scrolls to the top.
+            guard storage.length > 0 else { return }
+            let lastIndex = storage.length - 1
+            textView.scrollRangeToVisible(NSRange(location: lastIndex, length: 0))
         }
 
         // MARK: NSTextViewDelegate
@@ -599,6 +665,131 @@ private func appendLine(
         }
 
         out.append(NSAttributedString(string: run.text, attributes: attrs))
+    }
+}
+
+/// `NSLayoutManager` subclass with two narrow jobs:
+///
+/// 1. Suppress the empty line fragment AppKit appends after a trailing
+///    `\n`. Without this, every non-editable pane shows a line-height
+///    gap of dead space at the bottom (because `buildAllWithLengths`
+///    terminates every line with `\n`).
+///
+/// 2. When a highlight's per-line range ends in whitespace at a wrap
+///    point, shrink the width of that line's background fill so it
+///    doesn't extend past the last visible glyph. We deliberately
+///    only modify *width* — origin/height come straight from AppKit's
+///    `rectArray`, which is the known-good positioning. Prior attempts
+///    that re-derived the rect from `boundingRect` ended up misaligned.
+final class TightBackgroundLayoutManager: NSLayoutManager {
+    override func setExtraLineFragmentRect(
+        _ fragmentRect: NSRect,
+        usedRect: NSRect,
+        textContainer container: NSTextContainer
+    ) {
+        super.setExtraLineFragmentRect(.zero, usedRect: .zero, textContainer: container)
+    }
+
+    override func fillBackgroundRectArray(
+        _ rectArray: UnsafePointer<NSRect>,
+        count rectCount: Int,
+        forCharacterRange charRange: NSRange,
+        color: NSColor
+    ) {
+        guard let container = textContainers.first,
+              let storage = textStorage
+        else {
+            super.fillBackgroundRectArray(
+                rectArray, count: rectCount,
+                forCharacterRange: charRange, color: color
+            )
+            return
+        }
+        let highlightGlyphRange = glyphRange(
+            forCharacterRange: charRange, actualCharacterRange: nil
+        )
+        guard highlightGlyphRange.length > 0 else {
+            super.fillBackgroundRectArray(
+                rectArray, count: rectCount,
+                forCharacterRange: charRange, color: color
+            )
+            return
+        }
+
+        color.setFill()
+        let text = storage.string as NSString
+        var consumedRects = 0
+
+        enumerateLineFragments(forGlyphRange: highlightGlyphRange) {
+            [weak self] _, _, _, lineGlyphRange, stop in
+            guard let self else { return }
+            guard consumedRects < rectCount else {
+                stop.pointee = true
+                return
+            }
+            let raw = rectArray[consumedRects]
+            consumedRects += 1
+
+            let intersection = NSIntersectionRange(
+                highlightGlyphRange, lineGlyphRange
+            )
+            guard intersection.length > 0 else {
+                raw.fill()
+                return
+            }
+            let lineChars = self.characterRange(
+                forGlyphRange: intersection, actualGlyphRange: nil
+            )
+            guard lineChars.length > 0 else {
+                raw.fill()
+                return
+            }
+
+            // Count trailing whitespace chars in this line's slice.
+            var trimChars = 0
+            while trimChars < lineChars.length {
+                let idx = lineChars.location + lineChars.length - 1 - trimChars
+                let unit = text.character(at: idx)
+                guard let scalar = Unicode.Scalar(unit),
+                      CharacterSet.whitespacesAndNewlines.contains(scalar)
+                else { break }
+                trimChars += 1
+            }
+            if trimChars == 0 {
+                raw.fill()
+                return
+            }
+
+            // Measure the trailing whitespace's width via boundingRect.
+            // We only consume the *width*, never its origin — that's
+            // what makes this safe vs the earlier coord-derived rewrite.
+            let trimRange = NSRange(
+                location: lineChars.location + lineChars.length - trimChars,
+                length: trimChars
+            )
+            let trimGlyphs = self.glyphRange(
+                forCharacterRange: trimRange, actualCharacterRange: nil
+            )
+            let trimWidth = self.boundingRect(
+                forGlyphRange: trimGlyphs, in: container
+            ).width
+            // Defensive: bail out to the default rect if the measured
+            // width is garbage (NaN, zero, or wider than the rect).
+            guard trimWidth.isFinite, trimWidth > 0, trimWidth < raw.width else {
+                raw.fill()
+                return
+            }
+            var fill = raw
+            fill.size.width = raw.width - trimWidth
+            fill.fill()
+        }
+
+        // If AppKit handed us more rects than line fragments returned
+        // (shouldn't happen, but harmless to cover), draw the rest as-is.
+        while consumedRects < rectCount {
+            rectArray[consumedRects].fill()
+            consumedRects += 1
+        }
     }
 }
 

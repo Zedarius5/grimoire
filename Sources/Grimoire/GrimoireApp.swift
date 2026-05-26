@@ -3,14 +3,20 @@ import GrimoireKit
 
 @main
 struct GrimoireApp: App {
+    // App-level ownership so secondary windows (Spell Presets editor)
+    // can share the live client state without re-instantiating it.
+    @StateObject private var client = LichClient()
     @StateObject private var macros = MacroEngine()
     @StateObject private var highlights = HighlightStore()
+    @StateObject private var spellPresets = SpellPresetStore()
 
     var body: some Scene {
         WindowGroup("Grimoire") {
             ContentView()
+                .environmentObject(client)
                 .environmentObject(macros)
                 .environmentObject(highlights)
+                .environmentObject(spellPresets)
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1100, height: 750)
@@ -34,6 +40,13 @@ struct GrimoireApp: App {
                 .environmentObject(highlights)
         }
         .defaultSize(width: 900, height: 600)
+
+        Window("Spell Presets", id: "spell-presets") {
+            SpellPresetEditorView()
+                .environmentObject(spellPresets)
+                .environmentObject(client)
+        }
+        .defaultSize(width: 920, height: 620)
 
         Window("Icon Browser", id: "icons") {
             IconBrowserView()

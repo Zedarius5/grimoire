@@ -45,6 +45,44 @@ struct PaneSpec: Identifiable, Codable, Equatable, Hashable {
     var title: String
     var source: PaneSource
     var region: PaneRegion
+    /// When this pane is `.hidden` and this flag is on, lines that
+    /// would arrive in this pane's stream are rerouted into `"main"`
+    /// instead — so an Ambients window pushed off-screen doesn't
+    /// swallow the messages, they just land in the story feed.
+    /// Only meaningful for `.stream(...)` sources; ignored for
+    /// `.dialog(...)` (those are widget data, not chat-style lines).
+    var fallthroughToMainWhenHidden: Bool = false
+
+    init(
+        id: String,
+        title: String,
+        source: PaneSource,
+        region: PaneRegion,
+        fallthroughToMainWhenHidden: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.source = source
+        self.region = region
+        self.fallthroughToMainWhenHidden = fallthroughToMainWhenHidden
+    }
+
+    // Custom decoder so configs persisted before `fallthroughToMainWhenHidden`
+    // existed still load — missing key defaults to false (no behavior change).
+    private enum CodingKeys: String, CodingKey {
+        case id, title, source, region, fallthroughToMainWhenHidden
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.title = try c.decode(String.self, forKey: .title)
+        self.source = try c.decode(PaneSource.self, forKey: .source)
+        self.region = try c.decode(PaneRegion.self, forKey: .region)
+        self.fallthroughToMainWhenHidden = try c.decodeIfPresent(
+            Bool.self, forKey: .fallthroughToMainWhenHidden
+        ) ?? false
+    }
 }
 
 extension PaneSpec {
