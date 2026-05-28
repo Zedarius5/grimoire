@@ -140,7 +140,22 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
 
         workQueue.async { [weak self] in
             guard let self else { return }
-            self.connection?.cancel()
+            // Disown the previous connection's stateUpdateHandler BEFORE
+            // cancelling so its deferred `.cancelled` (or any late `.failed`)
+            // can't mutate this client's state. Without this detach, an old
+            // failed-connection's late `.cancelled` arriving after a fresh
+            // `connect()` would (1) revert status `.connecting` ->
+            // `.disconnected` and (2) call `scheduleRenderedStateClear()`,
+            // which bumps `disconnectGeneration` AFTER `connect()`'s own
+            // bump — so the pending clear's gen matches the current gen and
+            // fires ~4.5s into the new session, wiping the initial autostart
+            // scroll. Hits hardest on the launch-then-poll-connect path
+            // where the first few connect attempts fail until Lich's
+            // frontend port is bound.
+            if let old = self.connection {
+                old.stateUpdateHandler = nil
+                old.cancel()
+            }
             self.connection = nil
             self.renderer = StreamRenderer()
             self.byteBuffer = Data()
@@ -176,7 +191,14 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         scheduleRenderedStateClear()
 
         workQueue.async { [weak self] in
-            self?.connection?.cancel()
+            // Same handler-detach rationale as `connect()`: prevent the
+            // connection's eventual `.cancelled` from firing a second
+            // render-clear (or, if the user reconnects fast enough,
+            // tearing down the new `.connecting` state).
+            if let conn = self?.connection {
+                conn.stateUpdateHandler = nil
+                conn.cancel()
+            }
             self?.connection = nil
         }
     }
@@ -187,6 +209,14 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
     /// scratch — the server re-sends all of this during the post-login
     /// handshake.
     private func clearRenderedState() {
+        // Breadcrumb so it's obvious in the log if a clear ever fires
+        // unexpectedly (e.g., during an active session — which is how
+        // the "first few seconds of autostart cut off" bug presented).
+        appLog(
+            "LichClient",
+            "clearRenderedState firing (gen=\(disconnectGeneration), mainLines=\(mainLines.count))",
+            level: .info
+        )
         linesByStream = [:]
         streamRevisions = [:]
         gameState = GameState()
