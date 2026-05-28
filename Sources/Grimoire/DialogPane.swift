@@ -393,6 +393,35 @@ private struct DialogWidgetView: View {
 
     @Environment(\.fontSize) private var fontSize
     @EnvironmentObject private var spellPresets: SpellPresetStore
+    /// Highlight rules are evaluated against label/link text in dialog
+    /// widgets so user rules apply uniformly across every window
+    /// (story feed, side streams, and dialog panes like
+    /// `;playerwindow`'s output). Empty when the user has no rules,
+    /// in which case `HighlightProcessor.apply` short-circuits.
+    @EnvironmentObject private var highlights: HighlightStore
+
+    /// Runs the user's highlight rules over `text` and returns an
+    /// AttributedString carrying any matched fg/bg overrides. The
+    /// caller still applies the widget's default styling (color,
+    /// font, etc.) -- this layer only overlays user-defined rules.
+    private func highlighted(_ text: String) -> AttributedString {
+        let line = RenderedLine(runs: [
+            RenderedRun(text: text, style: RunStyle())
+        ])
+        let processed = HighlightProcessor.apply(highlights.highlights, to: line)
+        var out = AttributedString()
+        for run in processed.runs {
+            var seg = AttributedString(run.text)
+            if let hex = run.style.highlightFg, let c = Color(hex: hex) {
+                seg.foregroundColor = c
+            }
+            if let hex = run.style.highlightBg, let c = Color(hex: hex) {
+                seg.backgroundColor = c
+            }
+            out += seg
+        }
+        return out
+    }
 
     var body: some View {
         switch widget {
@@ -405,7 +434,7 @@ private struct DialogWidgetView: View {
                     .modifier(WidthModifier(width: width, height: 18))
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             } else {
-                Text(text)
+                Text(highlighted(text))
                     .font(.system(size: fontSize - 1, design: .monospaced))
                     .foregroundStyle(GameTheme.foreground)
                     .lineLimit(1)
@@ -417,7 +446,7 @@ private struct DialogWidgetView: View {
             Button {
                 if let cmd, !cmd.isEmpty { onCommand(cmd) }
             } label: {
-                Text(text)
+                Text(highlighted(text))
                     .font(.system(size: fontSize - 1, design: .monospaced))
                     .foregroundStyle(GameTheme.entityLink)
                     .underline()

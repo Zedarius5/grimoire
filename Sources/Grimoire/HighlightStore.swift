@@ -8,15 +8,34 @@ import GrimoireKit
 final class HighlightStore: ObservableObject {
 
     @Published var config: HighlightConfig = HighlightConfig() {
-        didSet {
-            // Persist on any change. Cheap (small payload, infrequent edits).
-            Preferences.saveHighlights(config)
-        }
+        didSet { scheduleSave() }
     }
+
+    private var saveTask: Task<Void, Never>?
+    /// Debounce window for `UserDefaults.set` + the
+    /// `NSUserDefaultsDidChange` notification fan-out. With ~900
+    /// rules the encoded blob is ~175 KB; without debouncing,
+    /// per-keystroke edits in the editor stall the UI because every
+    /// keystroke triggers a synchronous save + notification post.
+    private static let saveDelay: TimeInterval = 0.5
 
     init() {
         if let saved = Preferences.loadHighlights() {
             self.config = saved
+        }
+    }
+
+    deinit {
+        saveTask?.cancel()
+    }
+
+    private func scheduleSave() {
+        saveTask?.cancel()
+        let snapshot = config
+        saveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.saveDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            Preferences.saveHighlights(snapshot)
         }
     }
 

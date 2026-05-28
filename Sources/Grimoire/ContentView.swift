@@ -16,7 +16,12 @@ struct ContentView: View {
     // Presets editor's active-bars picker) can share the same live
     // state. Ownership lives in GrimoireApp via @StateObject.
     @EnvironmentObject private var client: LichClient
-    @StateObject private var lich = LichProcess()
+    // Hoisted to GrimoireApp so the AppDelegate can SIGTERM it on
+    // app quit. Lifetime is now app-scoped instead of view-scoped;
+    // this is functionally identical for ContentView (it's the only
+    // window holding a reference) except that the @StateObject's
+    // creation/destruction no longer races with quit.
+    @EnvironmentObject private var lich: LichProcess
     @EnvironmentObject private var macros: MacroEngine
     @EnvironmentObject private var highlights: HighlightStore
     @Environment(\.openWindow) private var openWindow
@@ -42,6 +47,20 @@ struct ContentView: View {
     @State private var showingLichLog: Bool = false
     @State private var didAutoOpenConnect: Bool = false
     @State private var showingDiscoveredPanes: Bool = false
+
+    /// Lags `client.isActive` by `disconnectFadeDelay` on the
+    /// true -> false transition. Drives the swap between the live
+    /// game feed and the GRIMOIRE sigil so a brief network blip
+    /// (or the QUIT roundtrip) doesn't slam the user back to the
+    /// "waiting" screen instantly. Transitions back to true the
+    /// moment we reconnect.
+    @State private var uiShowsActiveSession: Bool = false
+    @State private var deactivationTask: Task<Void, Never>? = nil
+    /// Seconds we hold on the last-seen game frame after the
+    /// socket drops, before fading to the sigil. The render-state
+    /// clear in `LichClient` is sized to outlast this + the
+    /// 1.25s cross-fade so the GameView doesn't empty mid-fade.
+    private static let disconnectFadeDelay: TimeInterval = 3.0
 
     @State private var launchAccount: String = ""
     @State private var launchPassword: String = ""
@@ -193,6 +212,25 @@ struct ContentView: View {
         }
         .onChange(of: client.streamWindowTitles) { _, _ in
             syncDiscoveredPanes()
+        }
+        // Drive the sigil/gameFeed swap off `uiShowsActiveSession`,
+        // which lags the false transition. Reconnect (false -> true)
+        // is immediate. Disconnect (true -> false) waits the grace
+        // period before flipping, and is cancelled by a quick
+        // reconnect inside that window.
+        .onChange(of: client.isActive) { _, isActive in
+            deactivationTask?.cancel()
+            if isActive {
+                uiShowsActiveSession = true
+            } else {
+                deactivationTask = Task { @MainActor in
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(Self.disconnectFadeDelay * 1_000_000_000)
+                    )
+                    guard !Task.isCancelled, !client.isActive else { return }
+                    uiShowsActiveSession = false
+                }
+            }
         }
     }
 
@@ -584,7 +622,7 @@ struct ContentView: View {
                 // — e.g., the brief window between `.connecting` becoming
                 // `.connected` and the first server emit). Otherwise show
                 // the animated GRIMOIRE sigil as a "waiting" screen.
-                if client.isActive {
+                if uiShowsActiveSession {
                     if client.mainLines.isEmpty {
                         emptyGamePlaceholder
                     } else {
@@ -601,11 +639,10 @@ struct ContentView: View {
                     SigilView()
                 }
             }
-            // Cross-fade between the sigil and the live feed whenever
-            // the connection state flips. 2s matches the disconnect
-            // fade-out applied to the surrounding panes — everything
-            // dissolves on the same beat.
-            .animation(.easeInOut(duration: 1.25), value: client.isActive)
+            // Cross-fade duration. The TIMING of the false transition
+            // is governed by `disconnectFadeDelay` (see .onChange below);
+            // 1.25s here is just how long the cross-fade itself runs.
+            .animation(.easeInOut(duration: 1.25), value: uiShowsActiveSession)
         }
     }
 

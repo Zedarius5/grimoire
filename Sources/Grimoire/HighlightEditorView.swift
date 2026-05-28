@@ -216,6 +216,11 @@ private struct HighlightDetail: View {
     @State private var caseSensitive: Bool
     @State private var wholeWord: Bool
     @State private var enabled: Bool
+    /// Debounces the per-keystroke commit so each character typed
+    /// into Match Text doesn't fire a `store.update` -> @Published
+    /// mutation -> SwiftUI list diff over ~900 rows.
+    @State private var commitTask: Task<Void, Never>? = nil
+    private static let commitDelay: TimeInterval = 0.25
 
     init(rule: Highlight, store: HighlightStore, onDelete: @escaping () -> Void) {
         self.rule = rule
@@ -289,7 +294,20 @@ private struct HighlightDetail: View {
             Spacer()
         }
         .onChange(of: draftHighlight) { _, new in
-            store.update(new)
+            commitTask?.cancel()
+            commitTask = Task { @MainActor in
+                try? await Task.sleep(
+                    nanoseconds: UInt64(Self.commitDelay * 1_000_000_000)
+                )
+                guard !Task.isCancelled else { return }
+                store.update(new)
+            }
+        }
+        .onDisappear {
+            // Flush any pending edit so the user doesn't lose changes
+            // by clicking away during the debounce window.
+            commitTask?.cancel()
+            store.update(draftHighlight)
         }
     }
 

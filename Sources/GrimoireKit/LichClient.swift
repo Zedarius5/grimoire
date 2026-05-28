@@ -131,6 +131,12 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         gameState = GameState()
         dialogs = [:]
         self.mode = mode
+        // Invalidate any pending render-state clear scheduled by a
+        // previous disconnect. With `renderedStateClearDelay` at 4.5s,
+        // it's easy to start a new session inside that window — and
+        // without this bump, the stale clear fires after the new
+        // session's first lines have arrived and wipes them.
+        disconnectGeneration &+= 1
 
         workQueue.async { [weak self] in
             guard let self else { return }
@@ -194,9 +200,12 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
     /// — the user would see the empty state briefly. With the delay the
     /// last-seen content stays put during the fade.
     ///
-    /// The constant here is tuned to match the UI's disconnect-fade
-    /// duration in `ContentView`. Bump both together if you change one.
-    private static let renderedStateClearDelay: TimeInterval = 1.25
+    /// The constant here covers ContentView's disconnect grace period
+    /// (3s "stay on last frame") plus the sigil cross-fade (1.25s),
+    /// with a small margin so state survives slightly longer than the
+    /// fade — otherwise the GameView would empty out mid-fade. Keep
+    /// in sync with `ContentView.disconnectFadeDelay`.
+    private static let renderedStateClearDelay: TimeInterval = 4.5
 
     /// Increments on each disconnect so a quick reconnect cancels any
     /// pending clear-and-reconnect race.
@@ -265,7 +274,20 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
 
     // MARK: - Connection lifecycle (main thread)
 
+    /// Fired once when an *established* connection drops (server-side
+    /// `QUIT`, network kill, user-clicked Disconnect button — anything
+    /// that takes us out of `.connected`). Specifically does NOT fire
+    /// on `.connecting → .failed` (initial connect refused) because
+    /// that's the path the user takes when Lich is still booting and
+    /// hasn't bound its frontend port yet; killing Lich there would
+    /// guarantee an unrecoverable refuse loop. App delegate uses this
+    /// hook to SIGTERM the spawned Lich child after the game-side has
+    /// closed cleanly.
+    public var onDisconnect: (() -> Void)?
+
     private func handleState(_ state: NWConnection.State) {
+        let wasConnected: Bool
+        if case .connected = status { wasConnected = true } else { wasConnected = false }
         switch state {
         case .ready:
             status = .connected
@@ -286,6 +308,12 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
             status = .failed(err.localizedDescription)
         default:
             break
+        }
+        // Only fire on a *connected* -> inactive edge. The
+        // `connecting -> failed` path stays silent so the user can
+        // retry while Lich is still booting.
+        if wasConnected, !isActive {
+            onDisconnect?()
         }
     }
 
