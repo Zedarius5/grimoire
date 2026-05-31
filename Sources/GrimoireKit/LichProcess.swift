@@ -37,6 +37,19 @@ public final class LichProcess: ObservableObject {
         proc.executableURL = URL(fileURLWithPath: rubyPath)
         proc.arguments = [lichPath] + args
 
+        // GUI-launched macOS apps don't inherit a shell environment, so
+        // LANG/LC_ALL are unset when we spawn Lich. Ruby then defaults
+        // `File.open` to US-ASCII, and any `.lic` containing a byte >0x7F
+        // (smart quotes, em-dash, accented name) crashes at script load
+        // with "invalid byte sequence in US-ASCII". From a Terminal these
+        // same scripts work because the shell injects LANG=en_US.UTF-8.
+        // Forcing UTF-8 here makes the spawn behave the same as a Terminal
+        // launch without touching Lich core or any user scripts.
+        var env = ProcessInfo.processInfo.environment
+        env["LANG"] = "en_US.UTF-8"
+        env["LC_ALL"] = "en_US.UTF-8"
+        proc.environment = env
+
         let outPipe = Pipe()
         proc.standardOutput = outPipe
         proc.standardError = outPipe
