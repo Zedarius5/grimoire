@@ -160,7 +160,7 @@ struct MacroEditorView: View {
                 Label("Add binding", systemImage: "plus")
             }
             Spacer()
-            Text("Syntax: `\\r` = submit · `\\x` = clear-first · `\\?` = template cursor · `{Token}` = built-in")
+            Text("Syntax: `\\r` = submit · `\\p[N]` = pause N sec (default 1) · `@` = cursor here · `\\?` = popup prompt · `\\x` = clear-first · `{Token}` = built-in")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

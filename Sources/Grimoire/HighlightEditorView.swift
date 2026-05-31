@@ -76,17 +76,15 @@ struct HighlightEditorView: View {
 
             List(selection: $selectedId) {
                 ForEach(visibleHighlights) { rule in
-                    HStack(spacing: 8) {
-                        Toggle("", isOn: bindingForEnabled(rule.id))
-                            .toggleStyle(.checkbox)
-                            .labelsHidden()
-                        VStack(alignment: .leading, spacing: 2) {
-                            inlineSample(rule)
-                            metaBadges(rule)
+                    HighlightRow(
+                        rule: rule,
+                        onToggleEnabled: { newValue in
+                            var updated = rule
+                            updated.enabled = newValue
+                            store.update(updated)
                         }
-                    }
+                    )
                     .tag(rule.id)
-                    .contentShape(Rectangle())
                 }
             }
             .listStyle(.inset)
@@ -105,42 +103,6 @@ struct HighlightEditorView: View {
             }
             .padding(8)
         }
-    }
-
-    /// Renders the rule's own match text styled with its fg / bg colors so the
-    /// list row previews exactly what the user will see in the game feed.
-    /// Falls back to a placeholder when the text is still empty.
-    private func inlineSample(_ rule: Highlight) -> some View {
-        let display = rule.text.isEmpty ? "(no text)" : rule.text
-        let fg = rule.fgColor.flatMap { Color(hex: $0) }
-        let bg = rule.bgColor.flatMap { Color(hex: $0) } ?? .clear
-        return Text(display)
-            .font(.system(size: 12, design: .monospaced))
-            .foregroundStyle(fg ?? .primary)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(bg)
-            .lineLimit(1)
-            .truncationMode(.tail)
-    }
-
-    @ViewBuilder
-    private func metaBadges(_ rule: Highlight) -> some View {
-        HStack(spacing: 4) {
-            if rule.entireLine    { badge("LINE") }
-            if rule.caseSensitive { badge("CASE") }
-            if rule.wholeWord     { badge("WORD") }
-        }
-    }
-
-    private func badge(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 8, weight: .bold, design: .monospaced))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(Color.white.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-            .foregroundStyle(.secondary)
     }
 
     // MARK: - Detail
@@ -165,20 +127,6 @@ struct HighlightEditorView: View {
         }
     }
 
-    // MARK: - Bindings
-
-    private func bindingForEnabled(_ id: UUID) -> Binding<Bool> {
-        Binding(
-            get: { store.highlights.first(where: { $0.id == id })?.enabled ?? false },
-            set: { newValue in
-                if var r = store.highlights.first(where: { $0.id == id }) {
-                    r.enabled = newValue
-                    store.update(r)
-                }
-            }
-        )
-    }
-
     // MARK: - Import
 
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -197,6 +145,68 @@ struct HighlightEditorView: View {
         } catch {
             importError = error.localizedDescription
         }
+    }
+}
+
+// MARK: - List row
+
+/// Standalone row so SwiftUI's value-type diff can skip rows whose
+/// `Highlight` hasn't changed. Keeping this out of the parent's
+/// closure (where the previous implementation called
+/// `store.highlights.first(where:)` inside a Binding `get:`) gets rid
+/// of the O(rules²) work per re-render that made toggling a single
+/// rule visibly stall the editor at ~900 rules.
+private struct HighlightRow: View {
+    let rule: Highlight
+    let onToggleEnabled: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Toggle("", isOn: Binding(
+                get: { rule.enabled },
+                set: { newValue in onToggleEnabled(newValue) }
+            ))
+            .toggleStyle(.checkbox)
+            .labelsHidden()
+            VStack(alignment: .leading, spacing: 2) {
+                inlineSample
+                metaBadges
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var inlineSample: some View {
+        let display = rule.text.isEmpty ? "(no text)" : rule.text
+        let fg = rule.fgColor.flatMap { Color(hex: $0) }
+        let bg = rule.bgColor.flatMap { Color(hex: $0) } ?? .clear
+        return Text(display)
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(fg ?? .primary)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(bg)
+            .lineLimit(1)
+            .truncationMode(.tail)
+    }
+
+    @ViewBuilder
+    private var metaBadges: some View {
+        HStack(spacing: 4) {
+            if rule.entireLine    { badge("LINE") }
+            if rule.caseSensitive { badge("CASE") }
+            if rule.wholeWord     { badge("WORD") }
+        }
+    }
+
+    private func badge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 8, weight: .bold, design: .monospaced))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .foregroundStyle(.secondary)
     }
 }
 
@@ -221,6 +231,14 @@ private struct HighlightDetail: View {
     /// mutation -> SwiftUI list diff over ~900 rows.
     @State private var commitTask: Task<Void, Never>? = nil
     private static let commitDelay: TimeInterval = 0.25
+    /// What the preview pane actually renders. Lags `draftHighlight`
+    /// by `previewDelay` because the preview's StoryTextView does a
+    /// full NSTextStorage rebuild + glyph re-layout whenever its
+    /// `highlights` array changes — per keystroke that turns into
+    /// 10+ rebuilds/sec and noticeably stalls input.
+    @State private var previewRule: Highlight
+    @State private var previewTask: Task<Void, Never>? = nil
+    private static let previewDelay: TimeInterval = 0.12
 
     init(rule: Highlight, store: HighlightStore, onDelete: @escaping () -> Void) {
         self.rule = rule
@@ -235,6 +253,7 @@ private struct HighlightDetail: View {
         _caseSensitive = State(initialValue: rule.caseSensitive)
         _wholeWord     = State(initialValue: rule.wholeWord)
         _enabled       = State(initialValue: rule.enabled)
+        _previewRule   = State(initialValue: rule)
     }
 
     /// Reflects the form state without going through `store` — keeps the
@@ -302,11 +321,23 @@ private struct HighlightDetail: View {
                 guard !Task.isCancelled else { return }
                 store.update(new)
             }
+            // Separate, shorter debounce for the preview pane so the
+            // user sees their edits with minimal lag but we don't pay
+            // the NSTextStorage rebuild cost for every single keystroke.
+            previewTask?.cancel()
+            previewTask = Task { @MainActor in
+                try? await Task.sleep(
+                    nanoseconds: UInt64(Self.previewDelay * 1_000_000_000)
+                )
+                guard !Task.isCancelled else { return }
+                previewRule = new
+            }
         }
         .onDisappear {
             // Flush any pending edit so the user doesn't lose changes
             // by clicking away during the debounce window.
             commitTask?.cancel()
+            previewTask?.cancel()
             store.update(draftHighlight)
         }
     }
@@ -325,14 +356,14 @@ private struct HighlightDetail: View {
     /// Using the real renderer means the preview is byte-identical to what
     /// the user sees in-game — no parallel rendering path to keep in sync.
     private var previewBlock: some View {
-        let sampleLines = HighlightPreviewSamples.lines(featuring: text)
-        // `revision` only needs to change when sampleLines change; any
-        // draftHighlight change (color, flags) is picked up by
-        // StoryTextView's separate `highlightHash` and forces a rebuild.
+        let sampleLines = HighlightPreviewSamples.lines(featuring: previewRule.text)
+        // Drives the preview off the debounced `previewRule` instead of
+        // `draftHighlight` so the StoryTextView rebuild fires at most
+        // once per ~120ms of typing rather than once per keystroke.
         return StoryTextView(
             lines: sampleLines,
             revision: sampleLines.count,
-            highlights: [draftHighlight],
+            highlights: [previewRule],
             onLinkClick: { _ in }
         )
         .frame(height: 140)

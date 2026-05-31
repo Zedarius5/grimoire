@@ -898,6 +898,14 @@ struct ContentView: View {
         macros.onTemplateText = { text in
             NotificationCenter.default.post(name: .grimoireMacroFillInput, object: text)
         }
+        // `\?` macros open a small always-on-top panel that gathers the
+        // user's value, then re-enters the engine with the substituted
+        // action so `\r`/`\p` semantics still apply.
+        macros.onPromptForInput = { [weak macros] action in
+            MacroPromptPanel.shared.show(action: action) { substituted in
+                macros?.executeAction(substituted)
+            }
+        }
         macros.startMonitoring()
 
         // Prefer the user's last edited-and-saved macro config over a fresh

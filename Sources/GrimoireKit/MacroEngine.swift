@@ -25,10 +25,20 @@ public final class MacroEngine: ObservableObject {
     /// Called when a built-in token fires (e.g. `{RepeatLast}`, `{PageUp}`).
     public var onBuiltin: (MacroBuiltin) -> Void = { _ in }
 
-    /// Called for `\?` template macros — the engine emits the prefix text up
-    /// to (but not including) the `\?`, leaving it to the UI to fill the
-    /// input field and place the cursor there.
+    /// Called for `@` cursor-fill macros — the engine emits the prefix text
+    /// up to (but not including) the `@`, leaving it to the UI to fill the
+    /// input field and place the cursor at the `@` position. (This is what
+    /// Wrayth's `@` does: e.g. `;exam @` puts `;exam ` in the input field
+    /// with the cursor sitting after the space.)
     public var onTemplateText: (String) -> Void = { _ in }
+
+    /// Called for `\?` prompt macros — the engine hands the full unmodified
+    /// action string to the UI, which is expected to display a small
+    /// always-on-top popup that gathers the user's value and then calls
+    /// `executeAction(_:)` back with the substituted string. Keeps the
+    /// Wrayth semantics intact: the user types into the popup, hits Enter,
+    /// and the assembled command (with `\r`, `\p`, etc. honored) fires.
+    public var onPromptForInput: (String) -> Void = { _ in }
 
     private var eventMonitor: Any?
 
@@ -205,6 +215,14 @@ public final class MacroEngine: ObservableObject {
 
     // MARK: - Execution
 
+    /// Entry point that callers (the popup, scripted re-entry, etc.) can
+    /// invoke directly with an action string that may still contain `\?`,
+    /// `@`, `\r`, `\p`, or built-in `{Token}` syntax. Internal `execute`
+    /// dispatches to the matching path.
+    public func executeAction(_ action: String) {
+        execute(action)
+    }
+
     private func execute(_ action: String) {
         // Built-in token form: {Token} or {Token}arg
         if action.hasPrefix("{"), let close = action.firstIndex(of: "}") {
@@ -214,37 +232,75 @@ public final class MacroEngine: ObservableObject {
             return
         }
 
-        // Template fill: contains `\?` somewhere — emit prefix text, let the
-        // input field take over.
+        // Prompt template (`\?`): always-on-top popup gathers the value,
+        // then re-enters via `executeAction(_:)` with the substituted
+        // string. Handled before `@` so a macro containing both prompts
+        // first, then fills.
         if action.contains("\\?") {
-            var text = action
-            text = text.replacingOccurrences(of: "\\x", with: "")
-            if let qRange = text.range(of: "\\?") {
-                let prefix = String(text[..<qRange.lowerBound])
-                onTemplateText(prefix)
-                return
-            }
+            onPromptForInput(action)
+            return
         }
 
-        // Otherwise parse \r-separated commands and send each.
-        let commands = parseCommands(action)
-        guard let client else { return }
-        for cmd in commands where !cmd.isEmpty {
-            client.echoLocal("> \(cmd)")
-            client.send(cmd)
+        // Cursor template (`@`): fill the input field with everything up to
+        // the `@`, leaving the cursor there for the user to finish. Useful
+        // for `;exam @` style macros where the user types the target.
+        if let atRange = action.range(of: "@") {
+            let prefix = String(action[..<atRange.lowerBound])
+            onTemplateText(prefix)
+            return
         }
+
+        // Otherwise tokenize into send/pause segments and dispatch.
+        runSegments(tokenize(action))
     }
 
-    private func parseCommands(_ action: String) -> [String] {
-        action
-            .components(separatedBy: "\\r")
-            .map { piece in
-                var s = piece
-                if s.hasPrefix("\\x") { s = String(s.dropFirst(2)) }
-                // Treat any other backslash escapes as literal removal for now.
-                return s.trimmingCharacters(in: .whitespaces)
+    /// One step of a macro action: either a command to send, or a pause
+    /// (in seconds) to wait before the next step. The tokenizer turns an
+    /// action string into a list of these in order.
+    private enum Segment {
+        case send(String)
+        case pause(Double)
+    }
+
+    /// Parses a `\r`-delimited action into a sequence of sends and pauses.
+    /// `\p` between commands becomes a 1-second pause; `\pN` (N a number)
+    /// pauses N seconds. `\x` at the start of a piece is stripped (it
+    /// means "clear input first," which is implicit when we send a
+    /// command without inheriting any input-field state).
+    private func tokenize(_ action: String) -> [Segment] {
+        var segments: [Segment] = []
+        for piece in action.components(separatedBy: "\\r") {
+            var s = piece
+            if s.hasPrefix("\\x") { s = String(s.dropFirst(2)) }
+            let trimmed = s.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            if trimmed.hasPrefix("\\p") {
+                let rest = String(trimmed.dropFirst(2))
+                let secs = Double(rest) ?? 1.0
+                segments.append(.pause(max(0.05, secs)))
+            } else {
+                segments.append(.send(trimmed))
             }
-            .filter { !$0.isEmpty }
+        }
+        return segments
+    }
+
+    /// Runs segments sequentially on the main actor so the `pause` step
+    /// can `await` without blocking. Each send echoes locally and goes
+    /// through the LichClient like a user-typed command.
+    private func runSegments(_ segments: [Segment]) {
+        guard let client else { return }
+        Task { @MainActor [client] in
+            for seg in segments {
+                switch seg {
+                case .send(let cmd):
+                    client.echoLocal("> \(cmd)")
+                    client.send(cmd)
+                case .pause(let secs):
+                    try? await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000))
+                }
+            }
+        }
     }
 
     private func executeBuiltin(token: String, rest: String) {
