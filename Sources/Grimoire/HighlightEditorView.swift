@@ -773,8 +773,7 @@ private struct HighlightDetail: View {
     /// here because its reconcile path is optimized for the append-only
     /// game feed (revision-counter based) and silently drops updates
     /// when an existing line's text content mutates without the line
-    /// count changing. That manifested as "type 'one repetition...' and
-    /// only see 'o' rendered."
+    /// count changing.
     private var testResultBlock: some View {
         Text(testResultAttributed)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -785,15 +784,27 @@ private struct HighlightDetail: View {
             .textSelection(.enabled)
     }
 
-    /// Runs the draft rule over `testInput` and returns an
+    /// Draft rule with group-level styling merged in. The test pane
+    /// has to honor inheritance just like the live renderer does --
+    /// without this, a rule that inherits its color from a group
+    /// (own fg unset) would render as plain text in the test pane and
+    /// the counter would report "no match" because there'd be nothing
+    /// styled to count, even when the regex genuinely matched.
+    private var resolvedTestRule: Highlight {
+        guard let g = parentGroup else { return draftHighlight }
+        return HighlightResolver.resolve([draftHighlight], groups: [g]).first ?? draftHighlight
+    }
+
+    /// Runs the resolved draft rule over `testInput` and returns an
     /// AttributedString with highlight colors / bold / italic applied
     /// run-by-run. Multi-line input keeps its line breaks.
     private var testResultAttributed: AttributedString {
         var out = AttributedString()
+        let rule = resolvedTestRule
         let inputLines = testInput.split(separator: "\n", omittingEmptySubsequences: false)
         for (i, raw) in inputLines.enumerated() {
             let inLine = RenderedLine(runs: [RenderedRun(text: String(raw), style: RunStyle())])
-            let processed = HighlightProcessor.apply([draftHighlight], to: inLine)
+            let processed = HighlightProcessor.apply([rule], to: inLine)
             for run in processed.runs {
                 var seg = AttributedString(run.text)
                 var font: Font = .system(.body, design: .monospaced)
@@ -818,15 +829,33 @@ private struct HighlightDetail: View {
     }
 
     /// Counts contiguous highlighted regions in `testInput` after the
-    /// draft rule is applied. Uses the real `HighlightProcessor` so
-    /// the count is byte-identical to what would fire in the live
+    /// resolved draft rule is applied. Uses the real `HighlightProcessor`
+    /// so the count is byte-identical to what would fire in the live
     /// game feed (including regex compile failures returning zero).
+    ///
+    /// Two important details:
+    /// - Group inheritance is applied (via `resolvedTestRule`) before
+    ///   counting, so a rule that gets its color from a group still
+    ///   registers matches.
+    /// - When the resolved rule has no visible styling at all (nothing
+    ///   to mark a match with), a sentinel fg color is force-applied
+    ///   just for the counter so the answer to "did my regex match?"
+    ///   doesn't depend on whether the user has any styling configured.
+    ///   The sentinel doesn't reach the visual render -- that uses
+    ///   `resolvedTestRule` directly.
     private var testMatchCount: Int {
         guard !testInput.isEmpty else { return 0 }
+        var ruleForCounting = resolvedTestRule
+        if ruleForCounting.fgColor == nil
+            && ruleForCounting.bgColor == nil
+            && !ruleForCounting.bold
+            && !ruleForCounting.italic {
+            ruleForCounting.fgColor = "#000001"
+        }
         var count = 0
         for rawLine in testInput.split(separator: "\n", omittingEmptySubsequences: false) {
             let input = RenderedLine(runs: [RenderedRun(text: String(rawLine), style: RunStyle())])
-            let processed = HighlightProcessor.apply([draftHighlight], to: input)
+            let processed = HighlightProcessor.apply([ruleForCounting], to: input)
             var inMatch = false
             for run in processed.runs {
                 let isHit = run.style.highlightFg != nil
