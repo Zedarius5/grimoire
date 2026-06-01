@@ -8,6 +8,10 @@ struct MacroEditorView: View {
     @EnvironmentObject var macros: MacroEngine
 
     @State private var selectedSetId: Int? = nil
+    /// Set by `addBinding` to the new row's id; consumed by the matching
+    /// `KeyCaptureField.onAppear` (and the matching ScrollViewReader's
+    /// scrollTo) so the user lands focused-and-capturing on the new row.
+    @State private var pendingCaptureForId: UUID? = nil
 
     private var selectedSetIndex: Int? {
         guard let id = selectedSetId else { return nil }
@@ -118,23 +122,42 @@ struct MacroEditorView: View {
     }
 
     private func bindingsList(setIdx: Int) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 6) {
-                if macros.config.sets[setIdx].bindings.isEmpty {
-                    Text("No bindings yet.")
-                        .foregroundStyle(.secondary)
-                        .padding()
-                } else {
-                    columnHeaders
-                    ForEach($macros.config.sets[setIdx].bindings) { $binding in
-                        BindingRow(binding: $binding) {
-                            deleteBinding(setIdx: setIdx, id: binding.id)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    if macros.config.sets[setIdx].bindings.isEmpty {
+                        Text("No bindings yet.")
+                            .foregroundStyle(.secondary)
+                            .padding()
+                    } else {
+                        columnHeaders
+                        ForEach(macros.config.sets[setIdx].bindings) { binding in
+                            BindingRow(
+                                binding: binding,
+                                requestedCaptureForId: $pendingCaptureForId,
+                                onCommit: { updated in
+                                    commitBinding(setIdx: setIdx, updated: updated)
+                                },
+                                onDelete: {
+                                    deleteBinding(setIdx: setIdx, id: binding.id)
+                                }
+                            )
+                            .id(binding.id)
                         }
                     }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .onChange(of: pendingCaptureForId) { _, new in
+                // Scroll the freshly-added row into view so capture mode
+                // is visible instead of falling off the bottom of the list.
+                if let id = new {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(id, anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 
@@ -160,9 +183,12 @@ struct MacroEditorView: View {
                 Label("Add binding", systemImage: "plus")
             }
             Spacer()
-            Text("Syntax: `\\r` = submit · `\\p[N]` = pause N sec (default 1) · `@` = cursor here · `\\?` = popup prompt · `\\x` = clear-first · `{Token}` = built-in")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("Keys: F1-F15 · LEFT/RIGHT/UP/DOWN · Page Up/Page Down · Home/End · Enter/Tab/Space/Esc/Backspace/Delete/Insert · Keypad 0-9 · letters · prefix with Shift-/Ctrl-/Alt-/Cmd-")
+                Text("Action: `\\r` = submit · `\\p[N]` = pause N sec · `@` = cursor here · `\\?` = popup prompt · `\\x` = clear-first · `{Token}` = built-in")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         }
         .padding(12)
     }
@@ -170,11 +196,24 @@ struct MacroEditorView: View {
     // MARK: - Mutations
 
     private func addBinding(setIdx: Int) {
-        macros.config.sets[setIdx].bindings.append(MacroBinding(key: "", action: ""))
+        let fresh = MacroBinding(key: "", action: "")
+        macros.config.sets[setIdx].bindings.append(fresh)
+        // Trigger scroll-to-and-auto-capture for the new row.
+        pendingCaptureForId = fresh.id
     }
 
     private func deleteBinding(setIdx: Int, id: UUID) {
         macros.config.sets[setIdx].bindings.removeAll { $0.id == id }
+    }
+
+    private func commitBinding(setIdx: Int, updated: MacroBinding) {
+        guard let i = macros.config.sets[setIdx].bindings.firstIndex(where: { $0.id == updated.id }) else { return }
+        // Skip the write if nothing meaningful changed. Without this guard
+        // the row's `.onDisappear` flush would still trip `@Published`
+        // when the user just navigates away.
+        if macros.config.sets[setIdx].bindings[i] != updated {
+            macros.config.sets[setIdx].bindings[i] = updated
+        }
     }
 
     private func addSet() {
@@ -191,24 +230,81 @@ struct MacroEditorView: View {
     }
 }
 
+/// Row in the macro bindings list.
+///
+/// Holds local `@State` for both editable fields and only commits back to
+/// the store on a 250ms debounce (and on `.onDisappear` flush). Without
+/// this, every keystroke into either field mutates a deeply-nested
+/// `@Published` member of `MacroEngine.config`, which fires
+/// `objectWillChange` on the whole engine and forces SwiftUI to re-diff
+/// the entire bindings list plus everything else subscribed to the
+/// environment object -- visible as cursor lag on every keystroke.
+/// Mirrors the pattern used by `HighlightDetail` for the same reason.
 private struct BindingRow: View {
-    @Binding var binding: MacroBinding
+    let binding: MacroBinding
+    @Binding var requestedCaptureForId: UUID?
+    let onCommit: (MacroBinding) -> Void
     let onDelete: () -> Void
+
+    @State private var keyDraft: String
+    @State private var actionDraft: String
+    @State private var commitTask: Task<Void, Never>? = nil
+    private static let commitDelay: TimeInterval = 0.25
+
+    init(
+        binding: MacroBinding,
+        requestedCaptureForId: Binding<UUID?>,
+        onCommit: @escaping (MacroBinding) -> Void,
+        onDelete: @escaping () -> Void
+    ) {
+        self.binding = binding
+        self._requestedCaptureForId = requestedCaptureForId
+        self.onCommit = onCommit
+        self.onDelete = onDelete
+        _keyDraft = State(initialValue: binding.key)
+        _actionDraft = State(initialValue: binding.action)
+    }
+
+    private var draft: MacroBinding {
+        MacroBinding(id: binding.id, key: keyDraft, action: actionDraft)
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            TextField("e.g. F1, Alt-Ctrl-E, Keypad 1", text: $binding.key)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.body, design: .monospaced))
-                .frame(width: 180)
-            TextField("e.g. stance def\\r or {RepeatLast}", text: $binding.action)
+            KeyCaptureField(
+                keyName: $keyDraft,
+                id: binding.id,
+                requestedCaptureForId: $requestedCaptureForId
+            )
+            .frame(width: 220)
+
+            TextField("e.g. stance def\\r or {RepeatLast}", text: $actionDraft)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
                 .frame(maxWidth: .infinity)
+
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
+        }
+        .onChange(of: keyDraft) { _, _ in scheduleCommit() }
+        .onChange(of: actionDraft) { _, _ in scheduleCommit() }
+        .onDisappear {
+            // Flush any pending edit so navigating away doesn't lose
+            // characters still inside the 250ms debounce window.
+            commitTask?.cancel()
+            onCommit(draft)
+        }
+    }
+
+    private func scheduleCommit() {
+        commitTask?.cancel()
+        let snapshot = draft
+        commitTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.commitDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            onCommit(snapshot)
         }
     }
 }

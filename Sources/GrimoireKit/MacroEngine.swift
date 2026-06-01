@@ -135,6 +135,15 @@ public final class MacroEngine: ObservableObject {
     }
 
     private func canonicalCombo(for event: NSEvent) -> String? {
+        Self.canonicalKey(for: event)
+    }
+
+    /// Builds the canonical binding string for an `NSEvent`. Public so the
+    /// macro-editor's key-capture field can produce strings byte-identical
+    /// to what the runtime matcher will compare against — without it the
+    /// editor and engine could drift on edge cases (modifier order, key
+    /// names, keypad routing) and the user's captured key wouldn't fire.
+    public static func canonicalKey(for event: NSEvent) -> String? {
         var parts: [String] = []
         let mods = event.modifierFlags
         if mods.contains(.shift)   { parts.append("Shift") }
@@ -142,14 +151,14 @@ public final class MacroEngine: ObservableObject {
         if mods.contains(.option)  { parts.append("Alt") }
         if mods.contains(.command) { parts.append("Cmd") }
 
-        guard let keyName = keyName(for: event) else { return nil }
+        guard let keyName = Self.keyName(for: event) else { return nil }
         parts.append(keyName)
         return parts.joined(separator: "-")
     }
 
     /// Maps NSEvent's keyCode (and falls back to characters) to a name string
     /// matching Wrayth's XML conventions.
-    private func keyName(for event: NSEvent) -> String? {
+    private static func keyName(for event: NSEvent) -> String? {
         let kc = Int(event.keyCode)
         let isKeypad = event.modifierFlags.contains(.numericPad)
         // Function keys
