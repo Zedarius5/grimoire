@@ -249,42 +249,28 @@ struct HighlightEditorView: View {
         }
     }
 
-    /// Wraps the existing `HighlightRow` content with a context menu
-    /// that lets the user move the rule to a different group (or out
-    /// of any group). Optional left-indent when shown nested under a
-    /// group header.
+    /// Optional left-indent when shown nested under a group header.
+    /// Group reassignment is now done via the dropdown in
+    /// `HighlightDetail` (matching the spell-preset editor's pattern),
+    /// so no right-click menu is needed here.
     @ViewBuilder
     private func ruleRow(_ rule: Highlight, indented: Bool) -> some View {
+        let parent = rule.groupId.flatMap { gid in
+            store.groups.first(where: { $0.id == gid })
+        }
         HStack(spacing: 0) {
             if indented {
                 Color.clear.frame(width: 20, height: 1)
             }
             HighlightRow(
                 rule: rule,
+                parentGroup: parent,
                 onToggleEnabled: { newValue in
                     var updated = rule
                     updated.enabled = newValue
                     store.update(updated)
                 }
             )
-        }
-        .contextMenu {
-            if !store.groups.isEmpty {
-                Menu("Move to group") {
-                    Button("(Ungrouped)") {
-                        var copy = rule; copy.groupId = nil
-                        store.update(copy)
-                    }
-                    Divider()
-                    ForEach(store.groups) { g in
-                        Button(g.name.isEmpty ? "Unnamed group" : g.name) {
-                            var copy = rule; copy.groupId = g.id
-                            store.update(copy)
-                        }
-                        .disabled(g.id == rule.groupId)
-                    }
-                }
-            }
         }
     }
 
@@ -479,9 +465,23 @@ enum HighlightSort: String, CaseIterable, Identifiable {
 /// `store.highlights.first(where:)` inside a Binding `get:`) gets rid
 /// of the O(rules²) work per re-render that made toggling a single
 /// rule visibly stall the editor at ~900 rules.
+///
+/// `parentGroup` is the row's group (when nested under one) so the
+/// inline sample can render with group inheritance applied -- a rule
+/// with no own fg color inside a red group shows red in the sidebar,
+/// matching what the game feed will actually display.
 private struct HighlightRow: View {
     let rule: Highlight
+    let parentGroup: HighlightGroup?
     let onToggleEnabled: (Bool) -> Void
+
+    /// Rule with group inheritance applied. Inline sample + B/I badges
+    /// read from this; CASE/WORD/REGEX/LINE badges stay on the rule's
+    /// own config since those are structural, not stylistic.
+    private var resolved: Highlight {
+        guard let g = parentGroup else { return rule }
+        return HighlightResolver.resolve([rule], groups: [g]).first ?? rule
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -500,13 +500,14 @@ private struct HighlightRow: View {
     }
 
     private var inlineSample: some View {
-        let display = rule.text.isEmpty ? "(no text)" : rule.text
-        let fg = rule.fgColor.flatMap { Color(hex: $0) }
-        let bg = rule.bgColor.flatMap { Color(hex: $0) } ?? .clear
+        let r = resolved
+        let display = r.text.isEmpty ? "(no text)" : r.text
+        let fg = r.fgColor.flatMap { Color(hex: $0) }
+        let bg = r.bgColor.flatMap { Color(hex: $0) } ?? .clear
         var t = Text(display)
             .font(.system(size: 12, design: .monospaced))
-        if rule.bold   { t = t.bold() }
-        if rule.italic { t = t.italic() }
+        if r.bold   { t = t.bold() }
+        if r.italic { t = t.italic() }
         return t
             .foregroundStyle(fg ?? .primary)
             .padding(.horizontal, 4)
@@ -518,13 +519,14 @@ private struct HighlightRow: View {
 
     @ViewBuilder
     private var metaBadges: some View {
+        let r = resolved
         HStack(spacing: 4) {
             if rule.usesPattern   { badge("REGEX") }
             if rule.entireLine    { badge("LINE") }
             if rule.caseSensitive { badge("CASE") }
             if rule.wholeWord     { badge("WORD") }
-            if rule.bold          { badge("B") }
-            if rule.italic        { badge("I") }
+            if r.bold             { badge("B") }
+            if r.italic           { badge("I") }
         }
     }
 
@@ -558,6 +560,7 @@ private struct HighlightDetail: View {
     @State private var usesPattern: Bool
     @State private var bold: Bool
     @State private var italic: Bool
+    @State private var groupId: UUID?
     /// True when the row was deleted via the trash button. Suppresses
     /// the `.onDisappear` flush so we don't immediately resurrect the
     /// deleted rule by pushing the local draft back into the store.
@@ -579,6 +582,7 @@ private struct HighlightDetail: View {
         _usesPattern   = State(initialValue: rule.usesPattern)
         _bold          = State(initialValue: rule.bold)
         _italic        = State(initialValue: rule.italic)
+        _groupId       = State(initialValue: rule.groupId)
     }
 
     /// Reflects the form state without going through `store` — keeps the
@@ -596,8 +600,16 @@ private struct HighlightDetail: View {
             kind: rule.kind,
             usesPattern: usesPattern,
             bold: bold,
-            italic: italic
+            italic: italic,
+            groupId: groupId
         )
+    }
+
+    /// The group `groupId` currently points at, if any. Drives the
+    /// "Inheriting from group X" hint.
+    private var parentGroup: HighlightGroup? {
+        guard let gid = groupId else { return nil }
+        return store.groups.first(where: { $0.id == gid })
     }
 
     var body: some View {
@@ -650,6 +662,25 @@ private struct HighlightDetail: View {
                 }
             }
 
+            if !store.groups.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Group").font(.subheadline.bold())
+                    Picker("", selection: $groupId) {
+                        Text("(None)").tag(UUID?.none)
+                        ForEach(store.groups) { g in
+                            Text(g.name.isEmpty ? "Unnamed group" : g.name).tag(UUID?.some(g.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    if let p = parentGroup {
+                        Text("Inheriting unset fields from group \"\(p.name.isEmpty ? "Unnamed group" : p.name)\".")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
@@ -659,32 +690,28 @@ private struct HighlightDetail: View {
 
             Spacer()
         }
+        .onChange(of: groupId) { _, _ in
+            // Group reassignment commits live (single discrete action,
+            // no per-keystroke cascade concern). This makes the
+            // sidebar reflect the move the instant the user picks a
+            // new group from the dropdown, mirroring the spell-preset
+            // editor's behavior.
+            store.update(draftHighlight)
+        }
         .onDisappear {
-            // Modal commit: the draft only propagates into the store
-            // when this view leaves the hierarchy -- which happens on
-            // selection change (the `.id(id)` on the parent recreates
-            // the detail for the new rule, tearing this one down),
-            // editor window close, or app quit. Until then every edit
-            // is local @State and the rest of the app sees the prior
-            // committed value.
+            // Modal commit for the rest of the form: the draft only
+            // propagates into the store when this view leaves the
+            // hierarchy (selection change, editor window close, app
+            // quit). Until then every edit is local @State and the
+            // rest of the app sees the prior committed value -- this
+            // is what eliminates the per-keystroke @Published cascade.
             //
             // Skip the flush when the user just hit Delete; otherwise
             // the local draft would resurrect the row we just removed.
             guard !didDelete else { return }
-            // Look up the rule's CURRENT store state. The captured
-            // `rule` is the init-time snapshot; anything an external
-            // path (right-click "Move to group", etc.) changed since
-            // wouldn't be on it. We compare against current so a
-            // no-op write is skipped, AND we splice the current
-            // groupId onto our draft so a move-while-editing isn't
-            // reverted by our commit (the draft doesn't track group
-            // membership; it's managed externally via the context
-            // menu).
             guard let current = store.highlights.first(where: { $0.id == rule.id }) else { return }
-            var finalDraft = draftHighlight
-            finalDraft.groupId = current.groupId
-            if current != finalDraft {
-                store.update(finalDraft)
+            if current != draftHighlight {
+                store.update(draftHighlight)
             }
         }
     }
@@ -708,13 +735,10 @@ private struct HighlightDetail: View {
     private func colorRow(title: String, isOn: Binding<Bool>, color: Binding<Color>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Toggle(title, isOn: isOn)
-            HStack(spacing: 6) {
-                ColorPicker("", selection: color, supportsOpacity: false)
-                    .labelsHidden()
-                ColorPaletteSwatches(selection: color)
-            }
-            .disabled(!isOn.wrappedValue)
-            .opacity(isOn.wrappedValue ? 1 : 0.45)
+            ColorPicker("", selection: color, supportsOpacity: false)
+                .labelsHidden()
+                .disabled(!isOn.wrappedValue)
+                .opacity(isOn.wrappedValue ? 1 : 0.45)
         }
     }
 
@@ -857,13 +881,10 @@ private struct HighlightGroupDetail: View {
     private func colorRow(title: String, isOn: Binding<Bool>, color: Binding<Color>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Toggle(title, isOn: isOn)
-            HStack(spacing: 6) {
-                ColorPicker("", selection: color, supportsOpacity: false)
-                    .labelsHidden()
-                ColorPaletteSwatches(selection: color)
-            }
-            .disabled(!isOn.wrappedValue)
-            .opacity(isOn.wrappedValue ? 1 : 0.45)
+            ColorPicker("", selection: color, supportsOpacity: false)
+                .labelsHidden()
+                .disabled(!isOn.wrappedValue)
+                .opacity(isOn.wrappedValue ? 1 : 0.45)
         }
     }
 }
@@ -890,48 +911,3 @@ private enum HighlightPreviewSamples {
     }
 }
 
-/// Game-themed quick-pick palette next to each ColorPicker. The user can
-/// click a swatch to set the bound color instantly without dragging
-/// through the system color panel. Colors are tuned to read well against
-/// `GameTheme.background` (dark) -- pure web reds/greens blow out, so
-/// these are slightly desaturated.
-private struct ColorPaletteSwatches: View {
-    @Binding var selection: Color
-
-    /// Curated set: monsterbold yellow, danger red, success green, link
-    /// cyan, royal magenta, warning orange, sky blue, neutral white,
-    /// muted grey. Tweak freely; the only contract is that each swatch
-    /// reads cleanly against the story background.
-    private static let presets: [(name: String, hex: String)] = [
-        ("Yellow",  "#FFCC66"),
-        ("Red",     "#E0524B"),
-        ("Green",   "#7DC479"),
-        ("Cyan",    "#6FCFEB"),
-        ("Magenta", "#D08CD0"),
-        ("Orange",  "#E89A4A"),
-        ("Blue",    "#7FA8E0"),
-        ("White",   "#F0F0F0"),
-        ("Grey",    "#9B9B9B"),
-    ]
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(Self.presets, id: \.hex) { preset in
-                let c = Color(hex: preset.hex) ?? .white
-                Button {
-                    selection = c
-                } label: {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(c)
-                        .frame(width: 16, height: 16)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                        )
-                }
-                .buttonStyle(.plain)
-                .help(preset.name)
-            }
-        }
-    }
-}
