@@ -768,25 +768,53 @@ private struct HighlightDetail: View {
         }
     }
 
-    /// Mini StoryTextView showing just the user's pasted test text,
-    /// styled with whatever the current draft rule would do to it.
-    /// Multi-line input splits on `\n` so pasting a 3-line excerpt
-    /// keeps the visual layout the user expects.
+    /// Test-panel renderer. Builds an AttributedString directly from
+    /// the processor's output -- we deliberately avoid StoryTextView
+    /// here because its reconcile path is optimized for the append-only
+    /// game feed (revision-counter based) and silently drops updates
+    /// when an existing line's text content mutates without the line
+    /// count changing. That manifested as "type 'one repetition...' and
+    /// only see 'o' rendered."
     private var testResultBlock: some View {
-        let lines: [RenderedLine] = testInput
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { RenderedLine(runs: [RenderedRun(text: String($0), style: RunStyle())]) }
-        return StoryTextView(
-            lines: lines,
-            revision: lines.count,
-            highlights: [draftHighlight],
-            onLinkClick: { _ in }
-        )
-        .frame(minHeight: 40, maxHeight: 120)
-        .background(GameTheme.background)
-        .overlay(Rectangle().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
-        .environment(\.fontSize, 13)
-        .environment(\.colorScheme, .dark)
+        Text(testResultAttributed)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .background(GameTheme.background)
+            .overlay(Rectangle().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+            .environment(\.colorScheme, .dark)
+            .textSelection(.enabled)
+    }
+
+    /// Runs the draft rule over `testInput` and returns an
+    /// AttributedString with highlight colors / bold / italic applied
+    /// run-by-run. Multi-line input keeps its line breaks.
+    private var testResultAttributed: AttributedString {
+        var out = AttributedString()
+        let inputLines = testInput.split(separator: "\n", omittingEmptySubsequences: false)
+        for (i, raw) in inputLines.enumerated() {
+            let inLine = RenderedLine(runs: [RenderedRun(text: String(raw), style: RunStyle())])
+            let processed = HighlightProcessor.apply([draftHighlight], to: inLine)
+            for run in processed.runs {
+                var seg = AttributedString(run.text)
+                var font: Font = .system(.body, design: .monospaced)
+                if run.style.highlightBold { font = font.bold() }
+                if run.style.italic        { font = font.italic() }
+                seg.font = font
+                if let hex = run.style.highlightFg, let c = Color(hex: hex) {
+                    seg.foregroundColor = c
+                } else {
+                    seg.foregroundColor = GameTheme.foreground
+                }
+                if let hex = run.style.highlightBg, let c = Color(hex: hex) {
+                    seg.backgroundColor = c
+                }
+                out += seg
+            }
+            if i < inputLines.count - 1 {
+                out += AttributedString("\n")
+            }
+        }
+        return out
     }
 
     /// Counts contiguous highlighted regions in `testInput` after the
