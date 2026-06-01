@@ -72,6 +72,40 @@ struct HighlightProcessorPatternTests {
         #expect(r == input)
     }
 
+    @Test("Bold / italic / underline / strikethrough traits propagate to matched runs")
+    func fontTraitsPropagate() {
+        let rule = Highlight(
+            text: "danger",
+            fgColor: "#FF0000",
+            bold: true,
+            italic: true,
+            underline: true,
+            strikethrough: true
+        )
+        let r = HighlightProcessor.apply([rule], to: line("the danger draws near"))
+        let hit = r.runs.first { $0.text == "danger" }
+        #expect(hit != nil)
+        #expect(hit?.style.highlightFg == "#FF0000")
+        #expect(hit?.style.highlightBold == true)
+        #expect(hit?.style.italic == true)
+        #expect(hit?.style.underline == true)
+        #expect(hit?.style.strikethrough == true)
+        // Surrounding runs must NOT inherit the traits.
+        let nonHit = r.runs.first { $0.text.contains("draws") }
+        #expect(nonHit?.style.italic == false)
+        #expect(nonHit?.style.underline == false)
+    }
+
+    @Test("Overlapping rules stack their traits (union, not last-wins)")
+    func traitsStack() {
+        let boldRule = Highlight(text: "alarm", bold: true)
+        let italicRule = Highlight(text: "alarm", italic: true)
+        let r = HighlightProcessor.apply([boldRule, italicRule], to: line("hear the alarm bells"))
+        let hit = r.runs.first { $0.text == "alarm" }
+        #expect(hit?.style.highlightBold == true)
+        #expect(hit?.style.italic == true)
+    }
+
     @Test("Invalid regex fails closed (no match, no crash)")
     func invalidRegexFailsClosed() {
         // `[` opens a character class that never closes -- ICU returns

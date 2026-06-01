@@ -231,8 +231,13 @@ private struct HighlightRow: View {
         let display = rule.text.isEmpty ? "(no text)" : rule.text
         let fg = rule.fgColor.flatMap { Color(hex: $0) }
         let bg = rule.bgColor.flatMap { Color(hex: $0) } ?? .clear
-        return Text(display)
+        var t = Text(display)
             .font(.system(size: 12, design: .monospaced))
+        if rule.bold          { t = t.bold() }
+        if rule.italic        { t = t.italic() }
+        if rule.underline     { t = t.underline() }
+        if rule.strikethrough { t = t.strikethrough() }
+        return t
             .foregroundStyle(fg ?? .primary)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
@@ -248,6 +253,10 @@ private struct HighlightRow: View {
             if rule.entireLine    { badge("LINE") }
             if rule.caseSensitive { badge("CASE") }
             if rule.wholeWord     { badge("WORD") }
+            if rule.bold          { badge("B") }
+            if rule.italic        { badge("I") }
+            if rule.underline     { badge("U") }
+            if rule.strikethrough { badge("S") }
         }
     }
 
@@ -279,6 +288,10 @@ private struct HighlightDetail: View {
     @State private var wholeWord: Bool
     @State private var enabled: Bool
     @State private var usesPattern: Bool
+    @State private var bold: Bool
+    @State private var italic: Bool
+    @State private var underline: Bool
+    @State private var strikethrough: Bool
     /// True when the row was deleted via the trash button. Suppresses
     /// the `.onDisappear` flush so we don't immediately resurrect the
     /// deleted rule by pushing the local draft back into the store.
@@ -298,6 +311,10 @@ private struct HighlightDetail: View {
         _wholeWord     = State(initialValue: rule.wholeWord)
         _enabled       = State(initialValue: rule.enabled)
         _usesPattern   = State(initialValue: rule.usesPattern)
+        _bold          = State(initialValue: rule.bold)
+        _italic        = State(initialValue: rule.italic)
+        _underline     = State(initialValue: rule.underline)
+        _strikethrough = State(initialValue: rule.strikethrough)
     }
 
     /// Reflects the form state without going through `store` — keeps the
@@ -313,7 +330,11 @@ private struct HighlightDetail: View {
             wholeWord: wholeWord,
             enabled: enabled,
             kind: rule.kind,
-            usesPattern: usesPattern
+            usesPattern: usesPattern,
+            bold: bold,
+            italic: italic,
+            underline: underline,
+            strikethrough: strikethrough
         )
     }
 
@@ -354,11 +375,19 @@ private struct HighlightDetail: View {
                 colorRow(title: "Background color", isOn: $bgEnabled, color: $bgColor)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Highlight entire line", isOn: $entireLine)
-                Toggle("Case sensitive",        isOn: $caseSensitive)
-                Toggle("Whole word only",       isOn: $wholeWord)
-                Toggle("Regex pattern",         isOn: $usesPattern)
+            HStack(alignment: .top, spacing: 24) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Highlight entire line", isOn: $entireLine)
+                    Toggle("Case sensitive",        isOn: $caseSensitive)
+                    Toggle("Whole word only",       isOn: $wholeWord)
+                    Toggle("Regex pattern",         isOn: $usesPattern)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Bold",          isOn: $bold)
+                    Toggle("Italic",        isOn: $italic)
+                    Toggle("Underline",     isOn: $underline)
+                    Toggle("Strikethrough", isOn: $strikethrough)
+                }
             }
 
             Divider()

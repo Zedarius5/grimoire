@@ -681,11 +681,23 @@ private func appendLine(
         let s = run.style
         var attrs: [NSAttributedString.Key: Any] = [:]
 
-        let bold = s.bold || s.monsterbold || s.styleId == "roomName"
-        attrs[.font] = NSFont.monospacedSystemFont(
+        // Bold from any source (protocol `<b>`, monsterbold, the room
+        // name style, OR a user highlight rule with bold).
+        let bold = s.bold || s.monsterbold || s.highlightBold || s.styleId == "roomName"
+        let italic = s.italic
+        let base = NSFont.monospacedSystemFont(
             ofSize: fontSize,
             weight: bold ? .bold : .regular
         )
+        if italic {
+            // SF Mono ships with an italic face; descriptors with the
+            // .italic trait pick it up. Falls back to a synthesised
+            // oblique if a particular weight+italic combo isn't shipped.
+            let italicDescriptor = base.fontDescriptor.withSymbolicTraits(.italic)
+            attrs[.font] = NSFont(descriptor: italicDescriptor, size: fontSize) ?? base
+        } else {
+            attrs[.font] = base
+        }
 
         let fg: NSColor
         if let hex = s.highlightFg, let c = NSColor(hexString: hex) {
@@ -721,6 +733,15 @@ private func appendLine(
             attrs[.link] = url
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
             attrs[.underlineColor] = fg
+        } else if s.underline {
+            // Don't double-apply: link underline already covers links.
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            attrs[.underlineColor] = fg
+        }
+
+        if s.strikethrough {
+            attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            attrs[.strikethroughColor] = fg
         }
 
         out.append(NSAttributedString(string: run.text, attributes: attrs))

@@ -28,6 +28,15 @@ public struct RunStyle: Equatable, Hashable, Sendable {
     public var highlightFg: String?
     /// Override background colour from a custom Highlight, hex `#RRGGBB`.
     public var highlightBg: String?
+    /// Highlight-driven trait additions. Stacked on top of the
+    /// protocol-derived `bold` / `monsterbold` so a user rule can
+    /// promote a span without un-bolding anything that was already bold.
+    /// `italic` / `underline` / `strikethrough` only have highlight
+    /// sources today -- the SF/Wrayth protocol doesn't emit them.
+    public var highlightBold: Bool
+    public var italic: Bool
+    public var underline: Bool
+    public var strikethrough: Bool
 
     public init(
         bold: Bool = false,
@@ -36,7 +45,11 @@ public struct RunStyle: Equatable, Hashable, Sendable {
         link: LinkRef? = nil,
         isPrompt: Bool = false,
         highlightFg: String? = nil,
-        highlightBg: String? = nil
+        highlightBg: String? = nil,
+        highlightBold: Bool = false,
+        italic: Bool = false,
+        underline: Bool = false,
+        strikethrough: Bool = false
     ) {
         self.bold = bold
         self.monsterbold = monsterbold
@@ -45,6 +58,10 @@ public struct RunStyle: Equatable, Hashable, Sendable {
         self.isPrompt = isPrompt
         self.highlightFg = highlightFg
         self.highlightBg = highlightBg
+        self.highlightBold = highlightBold
+        self.italic = italic
+        self.underline = underline
+        self.strikethrough = strikethrough
     }
 }
 

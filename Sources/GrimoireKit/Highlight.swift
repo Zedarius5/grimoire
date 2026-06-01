@@ -25,13 +25,17 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var wholeWord: Bool
     public var enabled: Bool
     public var kind: HighlightKind
-    /// When true, `text` is interpreted as a pattern with two shorthand
-    /// tokens (`#` matches one or more digits; `{s}` matches an optional
-    /// `s`) and everything else taken literally. So `(# hidden disk{s})`
-    /// matches `(1 hidden disk)`, `(256 hidden disks)`, and so on with a
-    /// single rule. Compiles to an `NSRegularExpression` cached per
-    /// pattern string in `HighlightProcessor`.
+    /// When true, `text` is interpreted as an ICU regex pattern (as
+    /// `NSRegularExpression` understands it). Compiles to a regex
+    /// cached per pattern string in `HighlightProcessor`.
     public var usesPattern: Bool
+    /// Font-trait additions applied to matched spans. Stack on top of
+    /// the protocol-derived `<b>` / monsterbold bold, so a user rule
+    /// can promote a span without un-bolding anything already bolded.
+    public var bold: Bool
+    public var italic: Bool
+    public var underline: Bool
+    public var strikethrough: Bool
 
     public init(
         id: UUID = UUID(),
@@ -43,7 +47,11 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         wholeWord: Bool = false,
         enabled: Bool = true,
         kind: HighlightKind = .text,
-        usesPattern: Bool = false
+        usesPattern: Bool = false,
+        bold: Bool = false,
+        italic: Bool = false,
+        underline: Bool = false,
+        strikethrough: Bool = false
     ) {
         self.id = id
         self.text = text
@@ -55,13 +63,18 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.enabled = enabled
         self.kind = kind
         self.usesPattern = usesPattern
+        self.bold = bold
+        self.italic = italic
+        self.underline = underline
+        self.strikethrough = strikethrough
     }
 
-    // Custom decoding so configs saved before `kind` / `usesPattern`
-    // existed still load -- anything missing those fields gets a
-    // backward-compatible default (text kind, literal matching).
+    // Custom decoding so configs saved before any of these later fields
+    // existed still load -- anything missing gets a backward-compatible
+    // default (text kind, literal matching, no font traits).
     private enum CodingKeys: String, CodingKey {
         case id, text, fgColor, bgColor, entireLine, caseSensitive, wholeWord, enabled, kind, usesPattern
+        case bold, italic, underline, strikethrough
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,6 +89,10 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.enabled       = try c.decode(Bool.self,  forKey: .enabled)
         self.kind          = (try? c.decode(HighlightKind.self, forKey: .kind)) ?? .text
         self.usesPattern   = (try? c.decode(Bool.self, forKey: .usesPattern)) ?? false
+        self.bold          = (try? c.decode(Bool.self, forKey: .bold)) ?? false
+        self.italic        = (try? c.decode(Bool.self, forKey: .italic)) ?? false
+        self.underline     = (try? c.decode(Bool.self, forKey: .underline)) ?? false
+        self.strikethrough = (try? c.decode(Bool.self, forKey: .strikethrough)) ?? false
     }
 }
 

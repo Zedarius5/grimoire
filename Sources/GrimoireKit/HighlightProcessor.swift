@@ -49,19 +49,25 @@ public enum HighlightProcessor {
 
         var fg = [String?](repeating: nil, count: count)
         var bg = [String?](repeating: nil, count: count)
+        var traits = [TraitMask](repeating: [], count: count)
         var lineFg: String? = nil
         var lineBg: String? = nil
+        var lineTraits: TraitMask = []
 
         for rule in active {
+            let ruleTraits = traitMask(for: rule)
             if rule.usesPattern {
                 applyRegexMatches(
                     rule: rule,
+                    ruleTraits: ruleTraits,
                     line: line.plainText,
                     count: count,
                     fg: &fg,
                     bg: &bg,
+                    traits: &traits,
                     lineFg: &lineFg,
-                    lineBg: &lineBg
+                    lineBg: &lineBg,
+                    lineTraits: &lineTraits
                 )
                 continue
             }
@@ -86,10 +92,12 @@ public enum HighlightProcessor {
                 if rule.entireLine {
                     if let f = rule.fgColor { lineFg = f }
                     if let b = rule.bgColor { lineBg = b }
+                    lineTraits.formUnion(ruleTraits)
                 } else {
                     for i in match.location ..< (match.location + match.length) {
                         if let f = rule.fgColor { fg[i] = f }
                         if let b = rule.bgColor { bg[i] = b }
+                        traits[i].formUnion(ruleTraits)
                     }
                 }
 
@@ -98,11 +106,13 @@ public enum HighlightProcessor {
             }
         }
 
-        // Line-wide colours fill in only where no per-character override exists.
-        if lineFg != nil || lineBg != nil {
+        // Line-wide colours / traits fill in only where no per-character
+        // override exists.
+        if lineFg != nil || lineBg != nil || !lineTraits.isEmpty {
             for i in 0 ..< count {
                 if fg[i] == nil { fg[i] = lineFg }
                 if bg[i] == nil { bg[i] = lineBg }
+                traits[i].formUnion(lineTraits)
             }
         }
 
@@ -120,14 +130,22 @@ public enum HighlightProcessor {
                 let pos = cursor + i
                 let curFg = fg[pos]
                 let curBg = bg[pos]
+                let curT  = traits[pos]
                 var j = i + 1
-                while j < runLen, fg[cursor + j] == curFg, bg[cursor + j] == curBg {
+                while j < runLen,
+                      fg[cursor + j] == curFg,
+                      bg[cursor + j] == curBg,
+                      traits[cursor + j] == curT {
                     j += 1
                 }
                 let segment = runText.substring(with: NSRange(location: i, length: j - i))
                 var style = run.style
                 style.highlightFg = curFg
                 style.highlightBg = curBg
+                if curT.contains(.bold)          { style.highlightBold = true }
+                if curT.contains(.italic)        { style.italic = true }
+                if curT.contains(.underline)     { style.underline = true }
+                if curT.contains(.strikethrough) { style.strikethrough = true }
                 output.append(RenderedRun(text: segment, style: style))
                 i = j
             }
@@ -137,18 +155,32 @@ public enum HighlightProcessor {
         return RenderedLine(runs: output)
     }
 
+    /// Compact per-character trait set. OptionSet so multiple matching
+    /// rules with different traits stack via `formUnion` instead of
+    /// last-rule-wins.
+    private struct TraitMask: OptionSet, Hashable {
+        let rawValue: UInt8
+        static let bold          = TraitMask(rawValue: 1 << 0)
+        static let italic        = TraitMask(rawValue: 1 << 1)
+        static let underline     = TraitMask(rawValue: 1 << 2)
+        static let strikethrough = TraitMask(rawValue: 1 << 3)
+    }
+
     /// Walks all regex matches for `rule` against `line` and stamps the
-    /// per-character fg/bg arrays (or line-wide fg/bg) just like the
-    /// literal path does. Honors `entireLine`. `wholeWord` is baked into
-    /// the compiled pattern via `\b` boundaries.
+    /// per-character fg/bg/trait arrays (or line-wide accumulators) just
+    /// like the literal path does. Honors `entireLine`. `wholeWord` is
+    /// baked into the compiled pattern via `\b` boundaries.
     private static func applyRegexMatches(
         rule: Highlight,
+        ruleTraits: TraitMask,
         line: String,
         count: Int,
         fg: inout [String?],
         bg: inout [String?],
+        traits: inout [TraitMask],
         lineFg: inout String?,
-        lineBg: inout String?
+        lineBg: inout String?,
+        lineTraits: inout TraitMask
     ) {
         guard let regex = compiledRegex(for: rule) else { return }
         let range = NSRange(location: 0, length: count)
@@ -157,14 +189,27 @@ public enum HighlightProcessor {
             if rule.entireLine {
                 if let f = rule.fgColor { lineFg = f }
                 if let b = rule.bgColor { lineBg = b }
+                lineTraits.formUnion(ruleTraits)
             } else {
                 let end = min(m.range.location + m.range.length, count)
                 for i in m.range.location ..< end {
                     if let f = rule.fgColor { fg[i] = f }
                     if let b = rule.bgColor { bg[i] = b }
+                    traits[i].formUnion(ruleTraits)
                 }
             }
         }
+    }
+
+    /// Collapses a rule's bold/italic/underline/strikethrough flags into
+    /// a TraitMask we can OR per character.
+    private static func traitMask(for rule: Highlight) -> TraitMask {
+        var m: TraitMask = []
+        if rule.bold          { m.insert(.bold) }
+        if rule.italic        { m.insert(.italic) }
+        if rule.underline     { m.insert(.underline) }
+        if rule.strikethrough { m.insert(.strikethrough) }
+        return m
     }
 
     /// Compile-once cache. Key includes the case-sensitivity flag so
