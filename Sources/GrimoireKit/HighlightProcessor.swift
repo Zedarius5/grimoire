@@ -197,31 +197,12 @@ public enum HighlightProcessor {
         return regex
     }
 
-    /// Translates Grimoire's pattern shorthand into a real regex string.
-    /// `#`   -> `\d+` (one or more digits).
-    /// `{s}` -> `s?`  (optional `s`).
-    /// Everything else: escaped literally so `(`, `.`, `+`, etc. don't
-    /// take on regex meanings the user didn't ask for.
-    ///
-    /// When `wholeWord` is true the result is wrapped in `\b...\b`.
+    /// Returns the user's pattern as-is (this is ICU regex syntax --
+    /// `\d`, `\w`, `[abc]`, `(a|b)`, `+`, `*`, `?`, anchors, etc.).
+    /// When `wholeWord` is true the pattern is wrapped in `\b...\b`
+    /// boundaries so existing literal-rule semantics carry over.
     private static func compilePattern(_ s: String, wholeWord: Bool) -> String {
-        var result = ""
-        var i = s.startIndex
-        while i < s.endIndex {
-            let remaining = s[i...]
-            if remaining.hasPrefix("#") {
-                result += "\\d+"
-                i = s.index(after: i)
-            } else if remaining.hasPrefix("{s}") {
-                result += "s?"
-                i = s.index(i, offsetBy: 3)
-            } else {
-                let ch = String(s[i])
-                result += NSRegularExpression.escapedPattern(for: ch)
-                i = s.index(after: i)
-            }
-        }
-        return wholeWord ? "\\b" + result + "\\b" : result
+        wholeWord ? "\\b" + s + "\\b" : s
     }
 
     private static func isWordChar(_ ch: unichar) -> Bool {

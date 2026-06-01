@@ -286,9 +286,15 @@ private struct HighlightDetail: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                 if usesPattern {
-                    Text("Pattern: `#` = any number, `{s}` = optional `s`. Everything else is literal.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Regex: `\\d` digit · `\\w` word char · `.` any · `?` optional · `+` 1+ · `*` 0+ · `[abc]` class · `(a|b)` alt. Escape `( ) . + ? * | [ ]` to match them literally.")
+                        if !patternIsValid {
+                            Text("Invalid regex — won't match anything.")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 }
             }
 
@@ -301,7 +307,7 @@ private struct HighlightDetail: View {
                 Toggle("Highlight entire line", isOn: $entireLine)
                 Toggle("Case sensitive",        isOn: $caseSensitive)
                 Toggle("Whole word only",       isOn: $wholeWord)
-                Toggle("Pattern matching (#, {s})", isOn: $usesPattern)
+                Toggle("Regex pattern",         isOn: $usesPattern)
             }
 
             Divider()
@@ -336,8 +342,18 @@ private struct HighlightDetail: View {
 
     private var matchPlaceholder: String {
         usesPattern
-            ? "e.g. (# hidden disk{s})"
+            ? #"e.g. \(\d+ hidden disks?\)"#
             : "e.g. greedy gremlins"
+    }
+
+    /// Live-validates the current pattern. Returns true for non-regex
+    /// rules and for empty-text regex rules; only flags actual ICU
+    /// compile failures so the user knows their pattern won't match.
+    /// Sub-µs per call -- NSRegularExpression compile is fast and the
+    /// HighlightProcessor cache catches repeated valid patterns anyway.
+    private var patternIsValid: Bool {
+        guard usesPattern, !text.isEmpty else { return true }
+        return (try? NSRegularExpression(pattern: text)) != nil
     }
 
     private func colorRow(title: String, isOn: Binding<Bool>, color: Binding<Color>) -> some View {

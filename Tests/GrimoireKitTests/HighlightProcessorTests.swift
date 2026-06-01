@@ -1,7 +1,7 @@
 import Testing
 @testable import GrimoireKit
 
-@Suite("HighlightProcessor pattern matching")
+@Suite("HighlightProcessor regex matching")
 struct HighlightProcessorPatternTests {
 
     private func line(_ s: String) -> RenderedLine {
@@ -12,10 +12,10 @@ struct HighlightProcessorPatternTests {
         result.runs.filter(predicate).map(\.text).joined()
     }
 
-    @Test("`#` shorthand matches one-or-more digits")
-    func hashMatchesDigits() {
+    @Test("Regex matches a span and applies fg/bg")
+    func basicMatch() {
         let rule = Highlight(
-            text: "(# hidden disk{s})",
+            text: #"\(\d+ hidden disks?\)"#,
             fgColor: "#FF0000",
             usesPattern: true
         )
@@ -27,18 +27,15 @@ struct HighlightProcessorPatternTests {
         for input in cases {
             let result = HighlightProcessor.apply([rule], to: line(input))
             let red = styledText(result) { $0.style.highlightFg == "#FF0000" }
-            // The matched span must include the `(` opening and the
-            // trailing `)`, so the user gets the whole `(N hidden disk(s))`
-            // bracket highlighted.
             #expect(red.hasPrefix("("))
             #expect(red.hasSuffix(")"))
             #expect(red.contains("hidden disk"))
         }
     }
 
-    @Test("`{s}` is optional")
-    func optionalSuffix() {
-        let rule = Highlight(text: "disk{s}", kind: .text, usesPattern: true)
+    @Test("Optional `s` (regex `?`) matches singular and plural")
+    func optionalCharacter() {
+        let rule = Highlight(text: "disks?", kind: .text, usesPattern: true)
             .applying(fgColor: "#00FF00")
         let single = HighlightProcessor.apply([rule], to: line("one disk here"))
         let plural = HighlightProcessor.apply([rule], to: line("two disks here"))
@@ -46,32 +43,43 @@ struct HighlightProcessorPatternTests {
         #expect(plural.runs.contains(where: { $0.text == "disks" && $0.style.highlightFg == "#00FF00" }))
     }
 
-    @Test("non-shorthand characters are taken literally")
-    func literalsAreEscaped() {
-        // A user-typed `(` would explode a real regex; the shorthand
-        // compiler must escape it so the rule still works as expected.
-        let rule = Highlight(text: "(# silver)", usesPattern: true)
+    @Test("Alternation matches either branch")
+    func alternation() {
+        let rule = Highlight(text: "(goblin|orc)", usesPattern: true)
             .applying(fgColor: "#FFCC00")
-        let r = HighlightProcessor.apply([rule], to: line("You get (50 silver) from the pile."))
-        let yellow = styledText(r) { $0.style.highlightFg == "#FFCC00" }
-        #expect(yellow == "(50 silver)")
+        let a = HighlightProcessor.apply([rule], to: line("the goblin attacks"))
+        let b = HighlightProcessor.apply([rule], to: line("the orc grunts"))
+        #expect(a.runs.contains(where: { $0.text == "goblin" && $0.style.highlightFg == "#FFCC00" }))
+        #expect(b.runs.contains(where: { $0.text == "orc"    && $0.style.highlightFg == "#FFCC00" }))
     }
 
-    @Test("pattern rule with no match leaves the line untouched")
+    @Test("Pattern with no match leaves the line untouched")
     func noMatchPreservesLine() {
-        let rule = Highlight(text: "# gems", usesPattern: true)
+        let rule = Highlight(text: #"\d+ gems"#, usesPattern: true)
             .applying(fgColor: "#FF00FF")
         let input = line("the sky is blue today")
         let r = HighlightProcessor.apply([rule], to: input)
         #expect(r == input)
     }
 
-    @Test("disabled pattern rule is ignored")
+    @Test("Disabled pattern rule is ignored")
     func disabledIgnored() {
-        var rule = Highlight(text: "# things", usesPattern: true)
+        var rule = Highlight(text: #"\d+ things"#, usesPattern: true)
             .applying(fgColor: "#FFFFFF")
         rule.enabled = false
         let input = line("found 12 things")
+        let r = HighlightProcessor.apply([rule], to: input)
+        #expect(r == input)
+    }
+
+    @Test("Invalid regex fails closed (no match, no crash)")
+    func invalidRegexFailsClosed() {
+        // `[` opens a character class that never closes -- ICU returns
+        // a compile error, our wrapper returns nil, the line passes
+        // through unchanged.
+        let rule = Highlight(text: "[unclosed", usesPattern: true)
+            .applying(fgColor: "#FFFFFF")
+        let input = line("any text whatsoever")
         let r = HighlightProcessor.apply([rule], to: input)
         #expect(r == input)
     }
