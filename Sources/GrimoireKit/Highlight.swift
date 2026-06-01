@@ -40,6 +40,14 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// its group are enabled. See `HighlightStore.effectiveHighlights`
     /// for the resolution.
     public var groupId: UUID?
+    /// Persisted last-chosen fg / bg. When the user toggles "Text
+    /// color" / "Background color" off in the editor we move the
+    /// active color into the stash before clearing the active field,
+    /// so re-enabling the toggle (even across sessions / app restarts)
+    /// brings the original color back. The processor never reads
+    /// these -- they're editor-only persistence.
+    public var stashedFgColor: String?
+    public var stashedBgColor: String?
 
     public init(
         id: UUID = UUID(),
@@ -54,7 +62,9 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         usesPattern: Bool = false,
         bold: Bool = false,
         italic: Bool = false,
-        groupId: UUID? = nil
+        groupId: UUID? = nil,
+        stashedFgColor: String? = nil,
+        stashedBgColor: String? = nil
     ) {
         self.id = id
         self.text = text
@@ -69,16 +79,18 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.bold = bold
         self.italic = italic
         self.groupId = groupId
+        self.stashedFgColor = stashedFgColor
+        self.stashedBgColor = stashedBgColor
     }
 
     // Custom decoding so configs saved before any of these later fields
     // existed still load -- anything missing gets a backward-compatible
-    // default (text kind, literal matching, no font traits, no group).
-    // Older saved-but-now-removed `underline` / `strikethrough` keys
-    // are just ignored on decode; no migration needed.
+    // default (text kind, literal matching, no font traits, no group,
+    // no stash). Older saved-but-now-removed `underline` /
+    // `strikethrough` keys are just ignored on decode; no migration.
     private enum CodingKeys: String, CodingKey {
         case id, text, fgColor, bgColor, entireLine, caseSensitive, wholeWord, enabled, kind, usesPattern
-        case bold, italic, groupId
+        case bold, italic, groupId, stashedFgColor, stashedBgColor
     }
 
     public init(from decoder: Decoder) throws {
@@ -96,6 +108,8 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.bold          = (try? c.decode(Bool.self, forKey: .bold)) ?? false
         self.italic        = (try? c.decode(Bool.self, forKey: .italic)) ?? false
         self.groupId       = try c.decodeIfPresent(UUID.self, forKey: .groupId)
+        self.stashedFgColor = try c.decodeIfPresent(String.self, forKey: .stashedFgColor)
+        self.stashedBgColor = try c.decodeIfPresent(String.self, forKey: .stashedBgColor)
     }
 }
 
@@ -127,6 +141,11 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
     /// on later -- this group-level toggle is the user-requested
     /// minimum.
     public var notify: Bool
+    /// Persisted last-chosen fg / bg, mirrors the stash on Highlight.
+    /// Lets the user toggle "Default text color" off and back on
+    /// without losing the color value, even across app restarts.
+    public var stashedFgColor: String?
+    public var stashedBgColor: String?
 
     public init(
         id: UUID = UUID(),
@@ -136,7 +155,9 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
         bold: Bool = false,
         italic: Bool = false,
         enabled: Bool = true,
-        notify: Bool = false
+        notify: Bool = false,
+        stashedFgColor: String? = nil,
+        stashedBgColor: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -146,6 +167,27 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
         self.italic = italic
         self.enabled = enabled
         self.notify = notify
+        self.stashedFgColor = stashedFgColor
+        self.stashedBgColor = stashedBgColor
+    }
+
+    // Backward-compat decode: stash fields decode as nil on older configs.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, fgColor, bgColor, bold, italic, enabled, notify, stashedFgColor, stashedBgColor
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id      = try c.decode(UUID.self, forKey: .id)
+        self.name    = try c.decode(String.self, forKey: .name)
+        self.fgColor = try c.decodeIfPresent(String.self, forKey: .fgColor)
+        self.bgColor = try c.decodeIfPresent(String.self, forKey: .bgColor)
+        self.bold    = try c.decode(Bool.self, forKey: .bold)
+        self.italic  = try c.decode(Bool.self, forKey: .italic)
+        self.enabled = try c.decode(Bool.self, forKey: .enabled)
+        self.notify  = try c.decode(Bool.self, forKey: .notify)
+        self.stashedFgColor = try c.decodeIfPresent(String.self, forKey: .stashedFgColor)
+        self.stashedBgColor = try c.decodeIfPresent(String.self, forKey: .stashedBgColor)
     }
 }
 

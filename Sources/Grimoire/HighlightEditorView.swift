@@ -593,6 +593,11 @@ private struct HighlightDetail: View {
     @State private var bold: Bool
     @State private var italic: Bool
     @State private var groupId: UUID?
+    /// Stash for the user's last-chosen fg / bg colors. Persisted on
+    /// the Highlight as `stashedFgColor` / `stashedBgColor` so toggling
+    /// "Text color" off doesn't destroy the user's previous pick.
+    @State private var stashedFgHex: String?
+    @State private var stashedBgHex: String?
     /// True when the row was deleted via the trash button. Suppresses
     /// the `.onDisappear` flush so we don't immediately resurrect the
     /// deleted rule by pushing the local draft back into the store.
@@ -606,8 +611,15 @@ private struct HighlightDetail: View {
         self.store = store
         self.onDelete = onDelete
         _text          = State(initialValue: rule.text)
-        _fgColor       = State(initialValue: rule.fgColor.flatMap { Color(hex: $0) } ?? .yellow)
-        _bgColor       = State(initialValue: rule.bgColor.flatMap { Color(hex: $0) } ?? .black)
+        // The color picker's @State always reflects the user's last
+        // intended pick: prefer the active fg, then the stashed value,
+        // then a sensible default. So a rule with no active color but
+        // a stashed red comes up as red in the picker -- the toggle is
+        // off, but flipping it on restores the red instantly.
+        let initialFgHex = rule.fgColor ?? rule.stashedFgColor
+        let initialBgHex = rule.bgColor ?? rule.stashedBgColor
+        _fgColor       = State(initialValue: initialFgHex.flatMap { Color(hex: $0) } ?? .yellow)
+        _bgColor       = State(initialValue: initialBgHex.flatMap { Color(hex: $0) } ?? .black)
         _fgEnabled     = State(initialValue: rule.fgColor != nil)
         _bgEnabled     = State(initialValue: rule.bgColor != nil)
         _entireLine    = State(initialValue: rule.entireLine)
@@ -618,6 +630,8 @@ private struct HighlightDetail: View {
         _bold          = State(initialValue: rule.bold)
         _italic        = State(initialValue: rule.italic)
         _groupId       = State(initialValue: rule.groupId)
+        _stashedFgHex  = State(initialValue: rule.stashedFgColor ?? rule.fgColor)
+        _stashedBgHex  = State(initialValue: rule.stashedBgColor ?? rule.bgColor)
     }
 
     /// Reflects the form state without going through `store` — keeps the
@@ -636,7 +650,9 @@ private struct HighlightDetail: View {
             usesPattern: usesPattern,
             bold: bold,
             italic: italic,
-            groupId: groupId
+            groupId: groupId,
+            stashedFgColor: stashedFgHex,
+            stashedBgColor: stashedBgHex
         )
     }
 
@@ -680,8 +696,18 @@ private struct HighlightDetail: View {
             }
 
             HStack(spacing: 24) {
-                colorRow(title: "Text color",       isOn: $fgEnabled, color: $fgColor)
-                colorRow(title: "Background color", isOn: $bgEnabled, color: $bgColor)
+                colorRow(
+                    title: "Text color",
+                    isOn: $fgEnabled,
+                    color: $fgColor,
+                    stash: $stashedFgHex
+                )
+                colorRow(
+                    title: "Background color",
+                    isOn: $bgEnabled,
+                    color: $bgColor,
+                    stash: $stashedBgHex
+                )
             }
 
             HStack(alignment: .top, spacing: 24) {
@@ -790,10 +816,43 @@ private struct HighlightDetail: View {
         return (try? NSRegularExpression(pattern: text)) != nil
     }
 
-    private func colorRow(title: String, isOn: Binding<Bool>, color: Binding<Color>) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(title, isOn: isOn)
-            ColorPicker("", selection: color, supportsOpacity: false)
+    /// Stash-aware color row. Toggling OFF moves the current color
+    /// into the stash before clearing the active field; toggling ON
+    /// restores from the stash (falling back to the picker's current
+    /// `Color` when no stash exists). Dragging the picker keeps the
+    /// stash in sync so the user's most recent pick is always what
+    /// comes back on the next toggle-on. The stash is persisted on
+    /// the Highlight (`stashedFgColor` / `stashedBgColor`), so this
+    /// works across app restarts.
+    private func colorRow(
+        title: String,
+        isOn: Binding<Bool>,
+        color: Binding<Color>,
+        stash: Binding<String?>
+    ) -> some View {
+        let wrappedToggle = Binding<Bool>(
+            get: { isOn.wrappedValue },
+            set: { newValue in
+                if newValue {
+                    if let s = stash.wrappedValue, let c = Color(hex: s) {
+                        color.wrappedValue = c
+                    }
+                } else {
+                    stash.wrappedValue = color.wrappedValue.hexString
+                }
+                isOn.wrappedValue = newValue
+            }
+        )
+        let wrappedColor = Binding<Color>(
+            get: { color.wrappedValue },
+            set: { newValue in
+                color.wrappedValue = newValue
+                stash.wrappedValue = newValue.hexString
+            }
+        )
+        return VStack(alignment: .leading, spacing: 4) {
+            Toggle(title, isOn: wrappedToggle)
+            ColorPicker("", selection: wrappedColor, supportsOpacity: false)
                 .labelsHidden()
                 .disabled(!isOn.wrappedValue)
                 .opacity(isOn.wrappedValue ? 1 : 0.45)
@@ -957,20 +1016,29 @@ private struct HighlightGroupDetail: View {
     @State private var enabled: Bool
     @State private var notify: Bool
     @State private var didDelete: Bool = false
+    @State private var stashedFgHex: String?
+    @State private var stashedBgHex: String?
 
     init(group: HighlightGroup, store: HighlightStore, onDelete: @escaping () -> Void) {
         self.group = group
         self.store = store
         self.onDelete = onDelete
         _name      = State(initialValue: group.name)
-        _fgColor   = State(initialValue: group.fgColor.flatMap { Color(hex: $0) } ?? .yellow)
-        _bgColor   = State(initialValue: group.bgColor.flatMap { Color(hex: $0) } ?? .black)
+        // Prefer active color, then stash, then default. Lets the
+        // picker show the user's intended pick even when the toggle
+        // is off, so toggling on restores it instantly.
+        let initialFgHex = group.fgColor ?? group.stashedFgColor
+        let initialBgHex = group.bgColor ?? group.stashedBgColor
+        _fgColor   = State(initialValue: initialFgHex.flatMap { Color(hex: $0) } ?? .yellow)
+        _bgColor   = State(initialValue: initialBgHex.flatMap { Color(hex: $0) } ?? .black)
         _fgEnabled = State(initialValue: group.fgColor != nil)
         _bgEnabled = State(initialValue: group.bgColor != nil)
         _bold      = State(initialValue: group.bold)
         _italic    = State(initialValue: group.italic)
         _enabled   = State(initialValue: group.enabled)
         _notify    = State(initialValue: group.notify)
+        _stashedFgHex = State(initialValue: group.stashedFgColor ?? group.fgColor)
+        _stashedBgHex = State(initialValue: group.stashedBgColor ?? group.bgColor)
     }
 
     private var draft: HighlightGroup {
@@ -982,7 +1050,9 @@ private struct HighlightGroupDetail: View {
             bold: bold,
             italic: italic,
             enabled: enabled,
-            notify: notify
+            notify: notify,
+            stashedFgColor: stashedFgHex,
+            stashedBgColor: stashedBgHex
         )
     }
 
@@ -1012,8 +1082,8 @@ private struct HighlightGroupDetail: View {
             }
 
             HStack(spacing: 24) {
-                colorRow(title: "Default text color", isOn: $fgEnabled, color: $fgColor)
-                colorRow(title: "Default background", isOn: $bgEnabled, color: $bgColor)
+                colorRow(title: "Default text color", isOn: $fgEnabled, color: $fgColor, stash: $stashedFgHex)
+                colorRow(title: "Default background", isOn: $bgEnabled, color: $bgColor, stash: $stashedBgHex)
             }
             Text("Member rules inherit these when their own color is unset.")
                 .font(.caption2)
@@ -1045,10 +1115,37 @@ private struct HighlightGroupDetail: View {
         }
     }
 
-    private func colorRow(title: String, isOn: Binding<Bool>, color: Binding<Color>) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(title, isOn: isOn)
-            ColorPicker("", selection: color, supportsOpacity: false)
+    /// Same stash-aware color row pattern as the rule detail uses;
+    /// see the equivalent in `HighlightDetail` for the rationale.
+    private func colorRow(
+        title: String,
+        isOn: Binding<Bool>,
+        color: Binding<Color>,
+        stash: Binding<String?>
+    ) -> some View {
+        let wrappedToggle = Binding<Bool>(
+            get: { isOn.wrappedValue },
+            set: { newValue in
+                if newValue {
+                    if let s = stash.wrappedValue, let c = Color(hex: s) {
+                        color.wrappedValue = c
+                    }
+                } else {
+                    stash.wrappedValue = color.wrappedValue.hexString
+                }
+                isOn.wrappedValue = newValue
+            }
+        )
+        let wrappedColor = Binding<Color>(
+            get: { color.wrappedValue },
+            set: { newValue in
+                color.wrappedValue = newValue
+                stash.wrappedValue = newValue.hexString
+            }
+        )
+        return VStack(alignment: .leading, spacing: 4) {
+            Toggle(title, isOn: wrappedToggle)
+            ColorPicker("", selection: wrappedColor, supportsOpacity: false)
                 .labelsHidden()
                 .disabled(!isOn.wrappedValue)
                 .opacity(isOn.wrappedValue ? 1 : 0.45)
