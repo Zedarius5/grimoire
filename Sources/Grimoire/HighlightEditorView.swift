@@ -10,9 +10,18 @@ struct HighlightEditorView: View {
     @State private var importing: Bool = false
     @State private var importError: String?
     @State private var listKind: HighlightKind = .text
+    @State private var filterText: String = ""
 
+    /// Filtered first by `kind` (text/names tab), then by the live filter
+    /// box. Filter match is case-insensitive substring against the rule's
+    /// match text -- the field a user actually types and remembers a
+    /// rule by. Single O(n) scan per render, cheap even at ~1k rules.
     private var visibleHighlights: [Highlight] {
-        store.highlights.filter { $0.kind == listKind }
+        let kindFiltered = store.highlights.filter { $0.kind == listKind }
+        guard !filterText.isEmpty else { return kindFiltered }
+        return kindFiltered.filter {
+            $0.text.localizedCaseInsensitiveContains(filterText)
+        }
     }
 
     var body: some View {
@@ -45,10 +54,14 @@ struct HighlightEditorView: View {
             HStack(spacing: 6) {
                 Text("Highlights").font(.headline)
                 Spacer()
-                Text("\(visibleHighlights.count)")
+                Text(countLabel)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                 Button {
+                    // Clear the filter so the freshly-added row is
+                    // visible even when the search wouldn't have
+                    // matched its placeholder text.
+                    filterText = ""
                     let placeholder = listKind == .name ? "new name" : "new highlight"
                     let fresh = store.add(
                         Highlight(text: placeholder, fgColor: "#FFCC66", kind: listKind)
@@ -71,6 +84,10 @@ struct HighlightEditorView: View {
             .labelsHidden()
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
+
+            filterBar
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
 
             Divider()
 
@@ -103,6 +120,40 @@ struct HighlightEditorView: View {
             }
             .padding(8)
         }
+    }
+
+    /// Magnifying-glass + text field + clear-X. Plain TextField rather
+    /// than `.searchable` because the editor lives inside an HSplitView,
+    /// not a NavigationStack -- `.searchable` doesn't anchor cleanly to
+    /// the left list pane in that layout.
+    private var filterBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+            TextField("Filter", text: $filterText)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+            if !filterText.isEmpty {
+                Button {
+                    filterText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Clear filter")
+            }
+        }
+    }
+
+    /// Count display in the list header. Shows total-after-filtering or
+    /// `matches / total` while a filter is active so the user can tell
+    /// how much the search narrowed the set.
+    private var countLabel: String {
+        let total = store.highlights.filter { $0.kind == listKind }.count
+        if filterText.isEmpty { return "\(total)" }
+        return "\(visibleHighlights.count)/\(total)"
     }
 
     // MARK: - Detail
