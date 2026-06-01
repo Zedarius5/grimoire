@@ -107,18 +107,23 @@ struct MacroEditorView: View {
     }
 
     private func header(setIdx: Int) -> some View {
-        HStack {
-            Text("Name")
-            TextField("", text: $macros.config.sets[setIdx].name)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 280)
-            Spacer()
-            Button("Activate this set") {
+        // Wrap in an inner view with stable identity so the local-state
+        // name draft below resets on set switch (and flushes on the
+        // outgoing set's `.onDisappear`).
+        SetNameHeader(
+            set: macros.config.sets[setIdx],
+            isActive: macros.activeSetId == macros.config.sets[setIdx].id,
+            onCommitName: { newName in
+                guard let i = macros.config.sets.firstIndex(where: { $0.id == macros.config.sets[setIdx].id }) else { return }
+                if macros.config.sets[i].name != newName {
+                    macros.config.sets[i].name = newName
+                }
+            },
+            onActivate: {
                 macros.setActive(setId: macros.config.sets[setIdx].id)
             }
-            .disabled(macros.activeSetId == macros.config.sets[setIdx].id)
-        }
-        .padding(12)
+        )
+        .id(macros.config.sets[setIdx].id)
     }
 
     private func bindingsList(setIdx: Int) -> some View {
@@ -230,16 +235,53 @@ struct MacroEditorView: View {
     }
 }
 
+/// Set-header strip with the editable name field. Local-state name
+/// draft commits on `.onDisappear` (set switch or editor close) so
+/// typing into the field doesn't cascade through the engine on every
+/// keystroke.
+private struct SetNameHeader: View {
+    let set: MacroSet
+    let isActive: Bool
+    let onCommitName: (String) -> Void
+    let onActivate: () -> Void
+
+    @State private var nameDraft: String
+
+    init(set: MacroSet, isActive: Bool, onCommitName: @escaping (String) -> Void, onActivate: @escaping () -> Void) {
+        self.set = set
+        self.isActive = isActive
+        self.onCommitName = onCommitName
+        self.onActivate = onActivate
+        _nameDraft = State(initialValue: set.name)
+    }
+
+    var body: some View {
+        HStack {
+            Text("Name")
+            TextField("", text: $nameDraft)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 280)
+            Spacer()
+            Button("Activate this set", action: onActivate)
+                .disabled(isActive)
+        }
+        .padding(12)
+        .onDisappear {
+            onCommitName(nameDraft)
+        }
+    }
+}
+
 /// Row in the macro bindings list.
 ///
-/// Holds local `@State` for both editable fields and only commits back to
-/// the store on a 250ms debounce (and on `.onDisappear` flush). Without
-/// this, every keystroke into either field mutates a deeply-nested
-/// `@Published` member of `MacroEngine.config`, which fires
-/// `objectWillChange` on the whole engine and forces SwiftUI to re-diff
-/// the entire bindings list plus everything else subscribed to the
-/// environment object -- visible as cursor lag on every keystroke.
-/// Mirrors the pattern used by `HighlightDetail` for the same reason.
+/// Holds local `@State` for both editable fields and ONLY commits back to
+/// the store on `.onDisappear` -- i.e. when the row is removed from the
+/// view tree, which happens on editor-window close, set switch, or
+/// delete. Until then every edit stays purely local, so the rest of the
+/// app sees the prior committed binding and there's no per-keystroke
+/// `@Published` cascade through `MacroEngine.config`. Mirrors the same
+/// pattern as `HighlightDetail` so editor latency is decoupled from
+/// collection size at every typing speed.
 private struct BindingRow: View {
     let binding: MacroBinding
     @Binding var requestedCaptureForId: UUID?
@@ -248,8 +290,7 @@ private struct BindingRow: View {
 
     @State private var keyDraft: String
     @State private var actionDraft: String
-    @State private var commitTask: Task<Void, Never>? = nil
-    private static let commitDelay: TimeInterval = 0.25
+    @State private var didDelete: Bool = false
 
     init(
         binding: MacroBinding,
@@ -283,28 +324,20 @@ private struct BindingRow: View {
                 .font(.system(.body, design: .monospaced))
                 .frame(maxWidth: .infinity)
 
-            Button(role: .destructive, action: onDelete) {
+            Button(role: .destructive) {
+                didDelete = true
+                onDelete()
+            } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
         }
-        .onChange(of: keyDraft) { _, _ in scheduleCommit() }
-        .onChange(of: actionDraft) { _, _ in scheduleCommit() }
         .onDisappear {
-            // Flush any pending edit so navigating away doesn't lose
-            // characters still inside the 250ms debounce window.
-            commitTask?.cancel()
+            // Suppress the flush when the user just hit Delete --
+            // otherwise the local draft would resurrect the row we
+            // just removed.
+            guard !didDelete else { return }
             onCommit(draft)
-        }
-    }
-
-    private func scheduleCommit() {
-        commitTask?.cancel()
-        let snapshot = draft
-        commitTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(Self.commitDelay * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            onCommit(snapshot)
         }
     }
 }

@@ -226,19 +226,10 @@ private struct HighlightDetail: View {
     @State private var caseSensitive: Bool
     @State private var wholeWord: Bool
     @State private var enabled: Bool
-    /// Debounces the per-keystroke commit so each character typed
-    /// into Match Text doesn't fire a `store.update` -> @Published
-    /// mutation -> SwiftUI list diff over ~900 rows.
-    @State private var commitTask: Task<Void, Never>? = nil
-    private static let commitDelay: TimeInterval = 0.25
-    /// What the preview pane actually renders. Lags `draftHighlight`
-    /// by `previewDelay` because the preview's StoryTextView does a
-    /// full NSTextStorage rebuild + glyph re-layout whenever its
-    /// `highlights` array changes — per keystroke that turns into
-    /// 10+ rebuilds/sec and noticeably stalls input.
-    @State private var previewRule: Highlight
-    @State private var previewTask: Task<Void, Never>? = nil
-    private static let previewDelay: TimeInterval = 0.12
+    /// True when the row was deleted via the trash button. Suppresses
+    /// the `.onDisappear` flush so we don't immediately resurrect the
+    /// deleted rule by pushing the local draft back into the store.
+    @State private var didDelete: Bool = false
 
     init(rule: Highlight, store: HighlightStore, onDelete: @escaping () -> Void) {
         self.rule = rule
@@ -253,7 +244,6 @@ private struct HighlightDetail: View {
         _caseSensitive = State(initialValue: rule.caseSensitive)
         _wholeWord     = State(initialValue: rule.wholeWord)
         _enabled       = State(initialValue: rule.enabled)
-        _previewRule   = State(initialValue: rule)
     }
 
     /// Reflects the form state without going through `store` — keeps the
@@ -278,6 +268,7 @@ private struct HighlightDetail: View {
                 Toggle("Enabled", isOn: $enabled)
                 Spacer()
                 Button(role: .destructive) {
+                    didDelete = true
                     onDelete()
                 } label: {
                     Label("Delete", systemImage: "trash")
@@ -312,33 +303,24 @@ private struct HighlightDetail: View {
 
             Spacer()
         }
-        .onChange(of: draftHighlight) { _, new in
-            commitTask?.cancel()
-            commitTask = Task { @MainActor in
-                try? await Task.sleep(
-                    nanoseconds: UInt64(Self.commitDelay * 1_000_000_000)
-                )
-                guard !Task.isCancelled else { return }
-                store.update(new)
-            }
-            // Separate, shorter debounce for the preview pane so the
-            // user sees their edits with minimal lag but we don't pay
-            // the NSTextStorage rebuild cost for every single keystroke.
-            previewTask?.cancel()
-            previewTask = Task { @MainActor in
-                try? await Task.sleep(
-                    nanoseconds: UInt64(Self.previewDelay * 1_000_000_000)
-                )
-                guard !Task.isCancelled else { return }
-                previewRule = new
-            }
-        }
         .onDisappear {
-            // Flush any pending edit so the user doesn't lose changes
-            // by clicking away during the debounce window.
-            commitTask?.cancel()
-            previewTask?.cancel()
-            store.update(draftHighlight)
+            // Modal commit: the draft only propagates into the store
+            // when this view leaves the hierarchy -- which happens on
+            // selection change (the `.id(id)` on the parent recreates
+            // the detail for the new rule, tearing this one down),
+            // editor window close, or app quit. Until then every edit
+            // is local @State and the rest of the app sees the prior
+            // committed value. Removes the per-keystroke @Published
+            // cascade entirely.
+            //
+            // Skip the flush when the user just hit Delete; otherwise
+            // the local draft would resurrect the row we just removed.
+            guard !didDelete else { return }
+            // No-op write guard: if the draft is identical to what's
+            // already in the store, don't fire @Published for nothing.
+            if rule != draftHighlight {
+                store.update(draftHighlight)
+            }
         }
     }
 
@@ -355,15 +337,19 @@ private struct HighlightDetail: View {
     /// pipeline the live game feed uses, with this draft rule pinned in.
     /// Using the real renderer means the preview is byte-identical to what
     /// the user sees in-game — no parallel rendering path to keep in sync.
+    ///
+    /// Reads `draftHighlight` directly: with the modal-commit pattern the
+    /// rest of the app no longer cascades on each keystroke, so paying
+    /// for the StoryTextView reconcile per keystroke is fine -- it stays
+    /// local to this view and the rebuild for ~6 sample lines plus one
+    /// rule is sub-ms.
     private var previewBlock: some View {
-        let sampleLines = HighlightPreviewSamples.lines(featuring: previewRule.text)
-        // Drives the preview off the debounced `previewRule` instead of
-        // `draftHighlight` so the StoryTextView rebuild fires at most
-        // once per ~120ms of typing rather than once per keystroke.
+        let draft = draftHighlight
+        let sampleLines = HighlightPreviewSamples.lines(featuring: draft.text)
         return StoryTextView(
             lines: sampleLines,
             revision: sampleLines.count,
-            highlights: [previewRule],
+            highlights: [draft],
             onLinkClick: { _ in }
         )
         .frame(height: 140)
