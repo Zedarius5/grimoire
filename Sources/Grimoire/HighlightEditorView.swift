@@ -565,6 +565,9 @@ private struct HighlightDetail: View {
     /// the `.onDisappear` flush so we don't immediately resurrect the
     /// deleted rule by pushing the local draft back into the store.
     @State private var didDelete: Bool = false
+    /// Scratch input for the "Test against your own text" panel. Not
+    /// persisted; gone when the user navigates away from the row.
+    @State private var testInput: String = ""
 
     init(rule: Highlight, store: HighlightStore, onDelete: @escaping () -> Void) {
         self.rule = rule
@@ -688,6 +691,29 @@ private struct HighlightDetail: View {
                 previewBlock
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Test against custom text").font(.subheadline.bold())
+                    Spacer()
+                    if !testInput.isEmpty {
+                        Text(testMatchLabel)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(testMatchCount > 0 ? .green : .red)
+                    }
+                }
+                TextField(
+                    "Paste a game line to check whether this rule matches it…",
+                    text: $testInput,
+                    axis: .vertical
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(1...4)
+                if !testInput.isEmpty {
+                    testResultBlock
+                }
+            }
+
             Spacer()
         }
         .onChange(of: groupId) { _, _ in
@@ -739,6 +765,58 @@ private struct HighlightDetail: View {
                 .labelsHidden()
                 .disabled(!isOn.wrappedValue)
                 .opacity(isOn.wrappedValue ? 1 : 0.45)
+        }
+    }
+
+    /// Mini StoryTextView showing just the user's pasted test text,
+    /// styled with whatever the current draft rule would do to it.
+    /// Multi-line input splits on `\n` so pasting a 3-line excerpt
+    /// keeps the visual layout the user expects.
+    private var testResultBlock: some View {
+        let lines: [RenderedLine] = testInput
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { RenderedLine(runs: [RenderedRun(text: String($0), style: RunStyle())]) }
+        return StoryTextView(
+            lines: lines,
+            revision: lines.count,
+            highlights: [draftHighlight],
+            onLinkClick: { _ in }
+        )
+        .frame(minHeight: 40, maxHeight: 120)
+        .background(GameTheme.background)
+        .overlay(Rectangle().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+        .environment(\.fontSize, 13)
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// Counts contiguous highlighted regions in `testInput` after the
+    /// draft rule is applied. Uses the real `HighlightProcessor` so
+    /// the count is byte-identical to what would fire in the live
+    /// game feed (including regex compile failures returning zero).
+    private var testMatchCount: Int {
+        guard !testInput.isEmpty else { return 0 }
+        var count = 0
+        for rawLine in testInput.split(separator: "\n", omittingEmptySubsequences: false) {
+            let input = RenderedLine(runs: [RenderedRun(text: String(rawLine), style: RunStyle())])
+            let processed = HighlightProcessor.apply([draftHighlight], to: input)
+            var inMatch = false
+            for run in processed.runs {
+                let isHit = run.style.highlightFg != nil
+                    || run.style.highlightBg != nil
+                    || run.style.highlightBold
+                    || run.style.italic
+                if isHit && !inMatch { count += 1; inMatch = true }
+                else if !isHit { inMatch = false }
+            }
+        }
+        return count
+    }
+
+    private var testMatchLabel: String {
+        switch testMatchCount {
+        case 0:  return "No match"
+        case 1:  return "1 match"
+        case let n: return "\(n) matches"
         }
     }
 
