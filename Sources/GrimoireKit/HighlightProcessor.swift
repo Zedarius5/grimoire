@@ -142,10 +142,8 @@ public enum HighlightProcessor {
                 var style = run.style
                 style.highlightFg = curFg
                 style.highlightBg = curBg
-                if curT.contains(.bold)          { style.highlightBold = true }
-                if curT.contains(.italic)        { style.italic = true }
-                if curT.contains(.underline)     { style.underline = true }
-                if curT.contains(.strikethrough) { style.strikethrough = true }
+                if curT.contains(.bold)   { style.highlightBold = true }
+                if curT.contains(.italic) { style.italic = true }
                 output.append(RenderedRun(text: segment, style: style))
                 i = j
             }
@@ -160,10 +158,8 @@ public enum HighlightProcessor {
     /// last-rule-wins.
     private struct TraitMask: OptionSet, Hashable {
         let rawValue: UInt8
-        static let bold          = TraitMask(rawValue: 1 << 0)
-        static let italic        = TraitMask(rawValue: 1 << 1)
-        static let underline     = TraitMask(rawValue: 1 << 2)
-        static let strikethrough = TraitMask(rawValue: 1 << 3)
+        static let bold   = TraitMask(rawValue: 1 << 0)
+        static let italic = TraitMask(rawValue: 1 << 1)
     }
 
     /// Walks all regex matches for `rule` against `line` and stamps the
@@ -201,14 +197,12 @@ public enum HighlightProcessor {
         }
     }
 
-    /// Collapses a rule's bold/italic/underline/strikethrough flags into
-    /// a TraitMask we can OR per character.
+    /// Collapses a rule's bold/italic flags into a TraitMask we can
+    /// OR per character.
     private static func traitMask(for rule: Highlight) -> TraitMask {
         var m: TraitMask = []
-        if rule.bold          { m.insert(.bold) }
-        if rule.italic        { m.insert(.italic) }
-        if rule.underline     { m.insert(.underline) }
-        if rule.strikethrough { m.insert(.strikethrough) }
+        if rule.bold   { m.insert(.bold) }
+        if rule.italic { m.insert(.italic) }
         return m
     }
 

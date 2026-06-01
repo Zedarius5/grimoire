@@ -11,17 +11,21 @@ struct HighlightEditorView: View {
     @State private var importError: String?
     @State private var listKind: HighlightKind = .text
     @State private var filterText: String = ""
+    @State private var sortOrder: HighlightSort = .insertion
 
     /// Filtered first by `kind` (text/names tab), then by the live filter
-    /// box. Filter match is case-insensitive substring against the rule's
-    /// match text -- the field a user actually types and remembers a
-    /// rule by. Single O(n) scan per render, cheap even at ~1k rules.
+    /// box, then sorted by the current sort order. Filter match is
+    /// case-insensitive substring against the rule's match text -- the
+    /// field a user actually types and remembers a rule by. Single
+    /// O(n) scan + O(n log n) sort per render, cheap even at ~1k rules.
     private var visibleHighlights: [Highlight] {
-        let kindFiltered = store.highlights.filter { $0.kind == listKind }
-        guard !filterText.isEmpty else { return kindFiltered }
-        return kindFiltered.filter {
-            $0.text.localizedCaseInsensitiveContains(filterText)
+        var rules = store.highlights.filter { $0.kind == listKind }
+        if !filterText.isEmpty {
+            rules = rules.filter {
+                $0.text.localizedCaseInsensitiveContains(filterText)
+            }
         }
+        return sortOrder.apply(to: rules)
     }
 
     var body: some View {
@@ -85,9 +89,12 @@ struct HighlightEditorView: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
 
-            filterBar
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
+            HStack(spacing: 8) {
+                filterBar
+                sortMenu
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
 
             Divider()
 
@@ -147,6 +154,25 @@ struct HighlightEditorView: View {
         }
     }
 
+    private var sortMenu: some View {
+        Menu {
+            ForEach(HighlightSort.allCases) { option in
+                Button {
+                    sortOrder = option
+                } label: {
+                    Label(option.label, systemImage: sortOrder == option ? "checkmark" : "")
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Sort highlights")
+    }
+
     /// Count display in the list header. Shows total-after-filtering or
     /// `matches / total` while a filter is active so the user can tell
     /// how much the search narrowed the set.
@@ -199,6 +225,56 @@ struct HighlightEditorView: View {
     }
 }
 
+/// Order options for the highlight list. `.insertion` is the natural
+/// save-order which also happens to be the match priority order at
+/// render time -- keep it as the default so the user's mental model of
+/// "later rules win on overlap" still holds when they're not actively
+/// sorting.
+enum HighlightSort: String, CaseIterable, Identifiable {
+    case insertion
+    case textAsc
+    case textDesc
+    case color
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .insertion: return "Insertion order"
+        case .textAsc:   return "Match text (A-Z)"
+        case .textDesc:  return "Match text (Z-A)"
+        case .color:     return "Color"
+        }
+    }
+
+    func apply(to rules: [Highlight]) -> [Highlight] {
+        switch self {
+        case .insertion:
+            return rules
+        case .textAsc:
+            return rules.sorted { $0.text.localizedCaseInsensitiveCompare($1.text) == .orderedAscending }
+        case .textDesc:
+            return rules.sorted { $0.text.localizedCaseInsensitiveCompare($1.text) == .orderedDescending }
+        case .color:
+            // Group same-colored rules together; rules without a fg
+            // color sink to the end. Within a color, fall back to
+            // case-insensitive text order so the result is stable.
+            return rules.sorted { a, b in
+                switch (a.fgColor, b.fgColor) {
+                case (nil, nil): return a.text.localizedCaseInsensitiveCompare(b.text) == .orderedAscending
+                case (nil, _):   return false
+                case (_, nil):   return true
+                case (let l?, let r?):
+                    if l == r {
+                        return a.text.localizedCaseInsensitiveCompare(b.text) == .orderedAscending
+                    }
+                    return l < r
+                }
+            }
+        }
+    }
+}
+
 // MARK: - List row
 
 /// Standalone row so SwiftUI's value-type diff can skip rows whose
@@ -233,10 +309,8 @@ private struct HighlightRow: View {
         let bg = rule.bgColor.flatMap { Color(hex: $0) } ?? .clear
         var t = Text(display)
             .font(.system(size: 12, design: .monospaced))
-        if rule.bold          { t = t.bold() }
-        if rule.italic        { t = t.italic() }
-        if rule.underline     { t = t.underline() }
-        if rule.strikethrough { t = t.strikethrough() }
+        if rule.bold   { t = t.bold() }
+        if rule.italic { t = t.italic() }
         return t
             .foregroundStyle(fg ?? .primary)
             .padding(.horizontal, 4)
@@ -255,8 +329,6 @@ private struct HighlightRow: View {
             if rule.wholeWord     { badge("WORD") }
             if rule.bold          { badge("B") }
             if rule.italic        { badge("I") }
-            if rule.underline     { badge("U") }
-            if rule.strikethrough { badge("S") }
         }
     }
 
@@ -290,8 +362,6 @@ private struct HighlightDetail: View {
     @State private var usesPattern: Bool
     @State private var bold: Bool
     @State private var italic: Bool
-    @State private var underline: Bool
-    @State private var strikethrough: Bool
     /// True when the row was deleted via the trash button. Suppresses
     /// the `.onDisappear` flush so we don't immediately resurrect the
     /// deleted rule by pushing the local draft back into the store.
@@ -313,8 +383,6 @@ private struct HighlightDetail: View {
         _usesPattern   = State(initialValue: rule.usesPattern)
         _bold          = State(initialValue: rule.bold)
         _italic        = State(initialValue: rule.italic)
-        _underline     = State(initialValue: rule.underline)
-        _strikethrough = State(initialValue: rule.strikethrough)
     }
 
     /// Reflects the form state without going through `store` — keeps the
@@ -332,9 +400,7 @@ private struct HighlightDetail: View {
             kind: rule.kind,
             usesPattern: usesPattern,
             bold: bold,
-            italic: italic,
-            underline: underline,
-            strikethrough: strikethrough
+            italic: italic
         )
     }
 
@@ -383,10 +449,8 @@ private struct HighlightDetail: View {
                     Toggle("Regex pattern",         isOn: $usesPattern)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Bold",          isOn: $bold)
-                    Toggle("Italic",        isOn: $italic)
-                    Toggle("Underline",     isOn: $underline)
-                    Toggle("Strikethrough", isOn: $strikethrough)
+                    Toggle("Bold",   isOn: $bold)
+                    Toggle("Italic", isOn: $italic)
                 }
             }
 
@@ -439,9 +503,13 @@ private struct HighlightDetail: View {
     private func colorRow(title: String, isOn: Binding<Bool>, color: Binding<Color>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Toggle(title, isOn: isOn)
-            ColorPicker("", selection: color, supportsOpacity: false)
-                .labelsHidden()
-                .disabled(!isOn.wrappedValue)
+            HStack(spacing: 6) {
+                ColorPicker("", selection: color, supportsOpacity: false)
+                    .labelsHidden()
+                ColorPaletteSwatches(selection: color)
+            }
+            .disabled(!isOn.wrappedValue)
+            .opacity(isOn.wrappedValue ? 1 : 0.45)
         }
     }
 
@@ -490,6 +558,52 @@ private enum HighlightPreviewSamples {
         }
         return base.map { line in
             RenderedLine(runs: [RenderedRun(text: line, style: RunStyle())])
+        }
+    }
+}
+
+/// Game-themed quick-pick palette next to each ColorPicker. The user can
+/// click a swatch to set the bound color instantly without dragging
+/// through the system color panel. Colors are tuned to read well against
+/// `GameTheme.background` (dark) -- pure web reds/greens blow out, so
+/// these are slightly desaturated.
+private struct ColorPaletteSwatches: View {
+    @Binding var selection: Color
+
+    /// Curated set: monsterbold yellow, danger red, success green, link
+    /// cyan, royal magenta, warning orange, sky blue, neutral white,
+    /// muted grey. Tweak freely; the only contract is that each swatch
+    /// reads cleanly against the story background.
+    private static let presets: [(name: String, hex: String)] = [
+        ("Yellow",  "#FFCC66"),
+        ("Red",     "#E0524B"),
+        ("Green",   "#7DC479"),
+        ("Cyan",    "#6FCFEB"),
+        ("Magenta", "#D08CD0"),
+        ("Orange",  "#E89A4A"),
+        ("Blue",    "#7FA8E0"),
+        ("White",   "#F0F0F0"),
+        ("Grey",    "#9B9B9B"),
+    ]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Self.presets, id: \.hex) { preset in
+                let c = Color(hex: preset.hex) ?? .white
+                Button {
+                    selection = c
+                } label: {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(c)
+                        .frame(width: 16, height: 16)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(preset.name)
+            }
         }
     }
 }

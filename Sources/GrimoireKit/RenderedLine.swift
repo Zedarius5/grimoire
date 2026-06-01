@@ -30,13 +30,11 @@ public struct RunStyle: Equatable, Hashable, Sendable {
     public var highlightBg: String?
     /// Highlight-driven trait additions. Stacked on top of the
     /// protocol-derived `bold` / `monsterbold` so a user rule can
-    /// promote a span without un-bolding anything that was already bold.
-    /// `italic` / `underline` / `strikethrough` only have highlight
-    /// sources today -- the SF/Wrayth protocol doesn't emit them.
+    /// promote a span without un-bolding anything that was already
+    /// bold. `italic` only has a highlight source today — the
+    /// SF/Wrayth protocol doesn't emit italic.
     public var highlightBold: Bool
     public var italic: Bool
-    public var underline: Bool
-    public var strikethrough: Bool
 
     public init(
         bold: Bool = false,
@@ -47,9 +45,7 @@ public struct RunStyle: Equatable, Hashable, Sendable {
         highlightFg: String? = nil,
         highlightBg: String? = nil,
         highlightBold: Bool = false,
-        italic: Bool = false,
-        underline: Bool = false,
-        strikethrough: Bool = false
+        italic: Bool = false
     ) {
         self.bold = bold
         self.monsterbold = monsterbold
@@ -60,8 +56,6 @@ public struct RunStyle: Equatable, Hashable, Sendable {
         self.highlightBg = highlightBg
         self.highlightBold = highlightBold
         self.italic = italic
-        self.underline = underline
-        self.strikethrough = strikethrough
     }
 }
 

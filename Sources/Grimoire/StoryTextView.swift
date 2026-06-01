@@ -733,15 +733,6 @@ private func appendLine(
             attrs[.link] = url
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
             attrs[.underlineColor] = fg
-        } else if s.underline {
-            // Don't double-apply: link underline already covers links.
-            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            attrs[.underlineColor] = fg
-        }
-
-        if s.strikethrough {
-            attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-            attrs[.strikethroughColor] = fg
         }
 
         out.append(NSAttributedString(string: run.text, attributes: attrs))

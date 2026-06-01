@@ -72,15 +72,13 @@ struct HighlightProcessorPatternTests {
         #expect(r == input)
     }
 
-    @Test("Bold / italic / underline / strikethrough traits propagate to matched runs")
+    @Test("Bold / italic traits propagate to matched runs")
     func fontTraitsPropagate() {
         let rule = Highlight(
             text: "danger",
             fgColor: "#FF0000",
             bold: true,
-            italic: true,
-            underline: true,
-            strikethrough: true
+            italic: true
         )
         let r = HighlightProcessor.apply([rule], to: line("the danger draws near"))
         let hit = r.runs.first { $0.text == "danger" }
@@ -88,12 +86,9 @@ struct HighlightProcessorPatternTests {
         #expect(hit?.style.highlightFg == "#FF0000")
         #expect(hit?.style.highlightBold == true)
         #expect(hit?.style.italic == true)
-        #expect(hit?.style.underline == true)
-        #expect(hit?.style.strikethrough == true)
         // Surrounding runs must NOT inherit the traits.
         let nonHit = r.runs.first { $0.text.contains("draws") }
         #expect(nonHit?.style.italic == false)
-        #expect(nonHit?.style.underline == false)
     }
 
     @Test("Overlapping rules stack their traits (union, not last-wins)")
