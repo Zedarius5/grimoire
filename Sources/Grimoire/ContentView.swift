@@ -163,6 +163,7 @@ struct ContentView: View {
             bottomBar
         }
         .frame(minWidth: 1000, minHeight: 600)
+        .navigationTitle("Grimoire · \(BuildInfo.label)")
         .environment(\.fontSize, fontSize)
         .environment(\.highlights, highlights.effectiveHighlights)
         .environment(\.openURL, OpenURLAction { url in
