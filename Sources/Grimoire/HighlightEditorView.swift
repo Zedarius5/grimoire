@@ -29,14 +29,45 @@ struct HighlightEditorView: View {
     /// the current sort order. Group affiliation is preserved on the
     /// rule itself -- the list layout consults `rule.groupId` to nest
     /// each rule under its group.
+    ///
+    /// Filter syntax:
+    /// - Plain text: case-insensitive substring against the match text.
+    /// - `tag:regex|line|case|word|bold|italic`: flag filter. Bold and
+    ///   italic honor group inheritance so a rule that gets bold from
+    ///   its parent group still matches `tag:bold`.
+    /// - Multiple space-separated terms AND together, so
+    ///   `tag:regex death` finds regex rules whose text contains
+    ///   "death".
     private var filteredRules: [Highlight] {
         var rules = store.highlights.filter { $0.kind == listKind }
         if !filterText.isEmpty {
-            rules = rules.filter {
-                $0.text.localizedCaseInsensitiveContains(filterText)
+            let groupsById = Dictionary(uniqueKeysWithValues: store.groups.map { ($0.id, $0) })
+            let terms = filterText
+                .split(separator: " ", omittingEmptySubsequences: true)
+                .map(String.init)
+            for term in terms {
+                rules = rules.filter { ruleMatches($0, term: term, groups: groupsById) }
             }
         }
         return sortOrder.apply(to: rules)
+    }
+
+    private func ruleMatches(_ rule: Highlight, term: String, groups: [UUID: HighlightGroup]) -> Bool {
+        let lower = term.lowercased()
+        if lower.hasPrefix("tag:") {
+            let tag = String(lower.dropFirst(4))
+            let group = rule.groupId.flatMap { groups[$0] }
+            switch tag {
+            case "regex":  return rule.usesPattern
+            case "line":   return rule.entireLine
+            case "case":   return rule.caseSensitive
+            case "word":   return rule.wholeWord
+            case "bold":   return rule.bold   || (group?.bold   ?? false)
+            case "italic": return rule.italic || (group?.italic ?? false)
+            default:       return false  // unknown tag matches nothing (strict)
+            }
+        }
+        return rule.text.localizedCaseInsensitiveContains(term)
     }
 
     private var visibleGroups: [HighlightGroup] {
@@ -180,9 +211,10 @@ struct HighlightEditorView: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
                 .font(.caption)
-            TextField("Filter", text: $filterText)
+            TextField("Filter (try tag:regex, tag:bold, ...)", text: $filterText)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
+                .help("Plain text matches the rule's text. Prefix a term with tag: to filter by flag — tag:regex, tag:line, tag:case, tag:word, tag:bold, tag:italic. Multiple terms AND together.")
             if !filterText.isEmpty {
                 Button {
                     filterText = ""
@@ -525,8 +557,8 @@ private struct HighlightRow: View {
             if rule.entireLine    { badge("LINE") }
             if rule.caseSensitive { badge("CASE") }
             if rule.wholeWord     { badge("WORD") }
-            if r.bold             { badge("B") }
-            if r.italic           { badge("I") }
+            if r.bold             { badge("bold") }
+            if r.italic           { badge("italic") }
         }
     }
 
