@@ -164,7 +164,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 1000, minHeight: 600)
         .environment(\.fontSize, fontSize)
-        .environment(\.highlights, highlights.highlights)
+        .environment(\.highlights, highlights.effectiveHighlights)
         .environment(\.openURL, OpenURLAction { url in
             GrimoireLinkRouter(client: client).handle(url)
         })

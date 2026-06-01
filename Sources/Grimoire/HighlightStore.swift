@@ -40,8 +40,18 @@ final class HighlightStore: ObservableObject {
     }
 
     var highlights: [Highlight] { config.highlights }
+    var groups: [HighlightGroup] { config.groups }
 
-    // MARK: - CRUD
+    /// Rule list with group-level fg/bg/traits/enabled pre-merged. The
+    /// renderer (StoryTextView env, DialogPane) consumes this so
+    /// HighlightProcessor itself stays group-agnostic. Implementation
+    /// lives in `HighlightResolver` so it's testable without bringing
+    /// in HighlightStore's UI dependencies.
+    var effectiveHighlights: [Highlight] {
+        HighlightResolver.resolve(config.highlights, groups: config.groups)
+    }
+
+    // MARK: - Rule CRUD
 
     func add(_ rule: Highlight = Highlight()) -> Highlight {
         var fresh = rule
@@ -61,5 +71,38 @@ final class HighlightStore: ObservableObject {
 
     func replaceAll(with rules: [Highlight]) {
         config.highlights = rules
+    }
+
+    // MARK: - Group CRUD
+
+    @discardableResult
+    func addGroup(_ group: HighlightGroup = HighlightGroup(name: "New Group")) -> HighlightGroup {
+        var fresh = group
+        if fresh.id == (HighlightGroup().id) { fresh.id = UUID() }
+        config.groups.append(fresh)
+        return fresh
+    }
+
+    func updateGroup(_ group: HighlightGroup) {
+        guard let idx = config.groups.firstIndex(where: { $0.id == group.id }) else { return }
+        config.groups[idx] = group
+    }
+
+    /// Removes the group and detaches all its member rules (sets their
+    /// `groupId` back to nil so they keep their own styling -- we never
+    /// silently delete user rules). Returns how many rules were
+    /// detached so a caller can confirm if it wants to.
+    @discardableResult
+    func removeGroup(id: UUID) -> Int {
+        var detached = 0
+        config.highlights = config.highlights.map { rule in
+            guard rule.groupId == id else { return rule }
+            detached += 1
+            var copy = rule
+            copy.groupId = nil
+            return copy
+        }
+        config.groups.removeAll { $0.id == id }
+        return detached
     }
 }

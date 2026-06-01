@@ -34,6 +34,12 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// can promote a span without un-bolding anything already bolded.
     public var bold: Bool
     public var italic: Bool
+    /// Optional `HighlightGroup` membership. When set, fields the rule
+    /// leaves unset (fgColor, bgColor) inherit from the group's
+    /// defaults, and the rule is only active when both the rule and
+    /// its group are enabled. See `HighlightStore.effectiveHighlights`
+    /// for the resolution.
+    public var groupId: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -47,7 +53,8 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         kind: HighlightKind = .text,
         usesPattern: Bool = false,
         bold: Bool = false,
-        italic: Bool = false
+        italic: Bool = false,
+        groupId: UUID? = nil
     ) {
         self.id = id
         self.text = text
@@ -61,16 +68,17 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.usesPattern = usesPattern
         self.bold = bold
         self.italic = italic
+        self.groupId = groupId
     }
 
     // Custom decoding so configs saved before any of these later fields
     // existed still load -- anything missing gets a backward-compatible
-    // default (text kind, literal matching, no font traits). Older
-    // saved-but-now-removed `underline` / `strikethrough` keys are just
-    // ignored on decode; no migration needed.
+    // default (text kind, literal matching, no font traits, no group).
+    // Older saved-but-now-removed `underline` / `strikethrough` keys
+    // are just ignored on decode; no migration needed.
     private enum CodingKeys: String, CodingKey {
         case id, text, fgColor, bgColor, entireLine, caseSensitive, wholeWord, enabled, kind, usesPattern
-        case bold, italic
+        case bold, italic, groupId
     }
 
     public init(from decoder: Decoder) throws {
@@ -87,13 +95,99 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.usesPattern   = (try? c.decode(Bool.self, forKey: .usesPattern)) ?? false
         self.bold          = (try? c.decode(Bool.self, forKey: .bold)) ?? false
         self.italic        = (try? c.decode(Bool.self, forKey: .italic)) ?? false
+        self.groupId       = try c.decodeIfPresent(UUID.self, forKey: .groupId)
+    }
+}
+
+/// A named bundle of styling and behavior applied to all member rules.
+/// Members override per-field — a rule with its own `fgColor` ignores
+/// the group's `fgColor`, but a rule that leaves `fgColor` unset
+/// inherits from here.
+///
+/// Mirrors the spell-preset group pattern in `SpellGroup`; the user
+/// asked for the same model so similar-but-not-identical rules can be
+/// organized together and share notification + styling defaults.
+public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendable {
+    public var id: UUID
+    public var name: String
+    /// Default foreground / background. Member rules inherit these
+    /// when their own field is nil.
+    public var fgColor: String?
+    public var bgColor: String?
+    /// Trait additions that OR with each member rule's own toggles.
+    public var bold: Bool
+    public var italic: Bool
+    /// Master toggle. When false, every member rule is treated as
+    /// disabled (the rule's own `enabled` flag is preserved on disk
+    /// so flipping the group back on restores the prior state).
+    public var enabled: Bool
+    /// Hook for the (forthcoming) notifications feature: when true,
+    /// a match by any member rule posts a macOS notification with
+    /// the matched line as the body. Per-rule notify can be layered
+    /// on later -- this group-level toggle is the user-requested
+    /// minimum.
+    public var notify: Bool
+
+    public init(
+        id: UUID = UUID(),
+        name: String = "",
+        fgColor: String? = nil,
+        bgColor: String? = nil,
+        bold: Bool = false,
+        italic: Bool = false,
+        enabled: Bool = true,
+        notify: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.fgColor = fgColor
+        self.bgColor = bgColor
+        self.bold = bold
+        self.italic = italic
+        self.enabled = enabled
+        self.notify = notify
+    }
+}
+
+/// Resolves a flat rule list against the user's groups. Member rules
+/// of a group inherit unset fg/bg from the group, OR their bold/italic
+/// flags with the group's, and are treated as disabled when the group
+/// itself is disabled. Pure value -- safe to call from any thread.
+public enum HighlightResolver {
+    public static func resolve(_ rules: [Highlight], groups: [HighlightGroup]) -> [Highlight] {
+        guard !groups.isEmpty else { return rules }
+        let byId = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        return rules.map { rule in
+            guard let gid = rule.groupId, let group = byId[gid] else { return rule }
+            var resolved = rule
+            resolved.enabled = rule.enabled && group.enabled
+            if resolved.fgColor == nil { resolved.fgColor = group.fgColor }
+            if resolved.bgColor == nil { resolved.bgColor = group.bgColor }
+            resolved.bold   = resolved.bold   || group.bold
+            resolved.italic = resolved.italic || group.italic
+            return resolved
+        }
     }
 }
 
 public struct HighlightConfig: Codable, Equatable, Sendable {
     public var highlights: [Highlight]
+    public var groups: [HighlightGroup]
 
-    public init(highlights: [Highlight] = []) {
+    public init(highlights: [Highlight] = [], groups: [HighlightGroup] = []) {
         self.highlights = highlights
+        self.groups = groups
+    }
+
+    // Custom decoding so configs saved before `groups` existed still
+    // load -- pre-grouping configs decode with `groups = []`.
+    private enum CodingKeys: String, CodingKey {
+        case highlights, groups
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.highlights = try c.decode([Highlight].self, forKey: .highlights)
+        self.groups     = (try? c.decode([HighlightGroup].self, forKey: .groups)) ?? []
     }
 }

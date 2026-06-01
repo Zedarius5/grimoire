@@ -408,7 +408,7 @@ private struct DialogWidgetView: View {
         let line = RenderedLine(runs: [
             RenderedRun(text: text, style: RunStyle())
         ])
-        let processed = HighlightProcessor.apply(highlights.highlights, to: line)
+        let processed = HighlightProcessor.apply(highlights.effectiveHighlights, to: line)
         var out = AttributedString()
         for run in processed.runs {
             var seg = AttributedString(run.text)
