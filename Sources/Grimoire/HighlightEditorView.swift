@@ -666,16 +666,25 @@ private struct HighlightDetail: View {
             // the detail for the new rule, tearing this one down),
             // editor window close, or app quit. Until then every edit
             // is local @State and the rest of the app sees the prior
-            // committed value. Removes the per-keystroke @Published
-            // cascade entirely.
+            // committed value.
             //
             // Skip the flush when the user just hit Delete; otherwise
             // the local draft would resurrect the row we just removed.
             guard !didDelete else { return }
-            // No-op write guard: if the draft is identical to what's
-            // already in the store, don't fire @Published for nothing.
-            if rule != draftHighlight {
-                store.update(draftHighlight)
+            // Look up the rule's CURRENT store state. The captured
+            // `rule` is the init-time snapshot; anything an external
+            // path (right-click "Move to group", etc.) changed since
+            // wouldn't be on it. We compare against current so a
+            // no-op write is skipped, AND we splice the current
+            // groupId onto our draft so a move-while-editing isn't
+            // reverted by our commit (the draft doesn't track group
+            // membership; it's managed externally via the context
+            // menu).
+            guard let current = store.highlights.first(where: { $0.id == rule.id }) else { return }
+            var finalDraft = draftHighlight
+            finalDraft.groupId = current.groupId
+            if current != finalDraft {
+                store.update(finalDraft)
             }
         }
     }
