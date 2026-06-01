@@ -4,21 +4,32 @@ import GrimoireKit
 /// Second window for managing custom highlights. Left: list of rules with
 /// an enable toggle. Right: detail editor with live preview against a
 /// canned sample paragraph so the user can see the result instantly.
+/// What's currently selected in the editor list. Polymorphic because
+/// the user can now select either an individual rule or a group, and
+/// the detail pane swaps between the two editors.
+enum HighlightSelection: Hashable {
+    case rule(UUID)
+    case group(UUID)
+}
+
 struct HighlightEditorView: View {
     @EnvironmentObject var store: HighlightStore
-    @State private var selectedId: UUID?
+    @State private var selection: HighlightSelection?
     @State private var importing: Bool = false
     @State private var importError: String?
     @State private var listKind: HighlightKind = .text
     @State private var filterText: String = ""
     @State private var sortOrder: HighlightSort = .insertion
+    /// Group ids that are collapsed in the sidebar. Default is
+    /// expanded; we track the negative because most users will leave
+    /// groups expanded most of the time.
+    @State private var collapsedGroups: Set<UUID> = []
 
-    /// Filtered first by `kind` (text/names tab), then by the live filter
-    /// box, then sorted by the current sort order. Filter match is
-    /// case-insensitive substring against the rule's match text -- the
-    /// field a user actually types and remembers a rule by. Single
-    /// O(n) scan + O(n log n) sort per render, cheap even at ~1k rules.
-    private var visibleHighlights: [Highlight] {
+    /// Rules that match the active kind tab + current filter, sorted by
+    /// the current sort order. Group affiliation is preserved on the
+    /// rule itself -- the list layout consults `rule.groupId` to nest
+    /// each rule under its group.
+    private var filteredRules: [Highlight] {
         var rules = store.highlights.filter { $0.kind == listKind }
         if !filterText.isEmpty {
             rules = rules.filter {
@@ -26,6 +37,18 @@ struct HighlightEditorView: View {
             }
         }
         return sortOrder.apply(to: rules)
+    }
+
+    private var visibleGroups: [HighlightGroup] {
+        store.groups
+    }
+
+    private func members(of group: HighlightGroup) -> [Highlight] {
+        filteredRules.filter { $0.groupId == group.id }
+    }
+
+    private var ungroupedRules: [Highlight] {
+        filteredRules.filter { $0.groupId == nil }
     }
 
     var body: some View {
@@ -44,10 +67,12 @@ struct HighlightEditorView: View {
             handleImport(result)
         }
         .onAppear {
-            if selectedId == nil { selectedId = visibleHighlights.first?.id }
+            if selection == nil, let first = filteredRules.first {
+                selection = .rule(first.id)
+            }
         }
         .onChange(of: listKind) { _, _ in
-            selectedId = visibleHighlights.first?.id
+            selection = filteredRules.first.map { .rule($0.id) }
         }
     }
 
@@ -61,21 +86,24 @@ struct HighlightEditorView: View {
                 Text(countLabel)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                Button {
-                    // Clear the filter so the freshly-added row is
-                    // visible even when the search wouldn't have
-                    // matched its placeholder text.
-                    filterText = ""
-                    let placeholder = listKind == .name ? "new name" : "new highlight"
-                    let fresh = store.add(
-                        Highlight(text: placeholder, fgColor: "#FFCC66", kind: listKind)
-                    )
-                    selectedId = fresh.id
+                Menu {
+                    Button {
+                        addRule(intoGroup: selectedGroupId)
+                    } label: {
+                        Label("New highlight", systemImage: "plus")
+                    }
+                    Button {
+                        addGroup()
+                    } label: {
+                        Label("New group", systemImage: "folder.badge.plus")
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
-                .buttonStyle(.borderless)
-                .help("Add a new \(listKind == .name ? "name" : "highlight")")
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Add a highlight or a group")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -98,17 +126,31 @@ struct HighlightEditorView: View {
 
             Divider()
 
-            List(selection: $selectedId) {
-                ForEach(visibleHighlights) { rule in
-                    HighlightRow(
-                        rule: rule,
-                        onToggleEnabled: { newValue in
-                            var updated = rule
-                            updated.enabled = newValue
-                            store.update(updated)
+            List(selection: $selection) {
+                ForEach(visibleGroups) { group in
+                    groupHeaderRow(group)
+                        .tag(HighlightSelection.group(group.id))
+                    if !collapsedGroups.contains(group.id) {
+                        ForEach(members(of: group)) { rule in
+                            ruleRow(rule, indented: true)
+                                .tag(HighlightSelection.rule(rule.id))
                         }
-                    )
-                    .tag(rule.id)
+                    }
+                }
+                if !ungroupedRules.isEmpty {
+                    if !visibleGroups.isEmpty {
+                        // Soft divider between the grouped section and
+                        // the loose rules so it's visually obvious
+                        // where membership ends.
+                        Text("Ungrouped")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 6)
+                    }
+                    ForEach(ungroupedRules) { rule in
+                        ruleRow(rule, indented: false)
+                            .tag(HighlightSelection.rule(rule.id))
+                    }
                 }
             }
             .listStyle(.inset)
@@ -154,6 +196,140 @@ struct HighlightEditorView: View {
         }
     }
 
+    /// Group header row. Selectable like a rule, plus a chevron that
+    /// toggles expansion. Right-click offers rename/delete; rules can
+    /// also be moved into / out of the group from their own context
+    /// menu in `ruleRow`.
+    @ViewBuilder
+    private func groupHeaderRow(_ group: HighlightGroup) -> some View {
+        let isExpanded = !collapsedGroups.contains(group.id)
+        let memberCount = members(of: group).count
+        HStack(spacing: 6) {
+            Button {
+                if isExpanded {
+                    collapsedGroups.insert(group.id)
+                } else {
+                    collapsedGroups.remove(group.id)
+                }
+            } label: {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Circle()
+                .fill(group.fgColor.flatMap(Color.init(hex:)) ?? .accentColor)
+                .frame(width: 9, height: 9)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(group.name.isEmpty ? "Unnamed group" : group.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text("\(memberCount) \(memberCount == 1 ? "rule" : "rules")")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if !group.enabled {
+                badge("OFF")
+            }
+        }
+        .contextMenu {
+            Button("New highlight in group") {
+                addRule(intoGroup: group.id)
+            }
+            Divider()
+            Button("Delete group", role: .destructive) {
+                store.removeGroup(id: group.id)
+                if selection == .group(group.id) { selection = nil }
+            }
+        }
+    }
+
+    /// Wraps the existing `HighlightRow` content with a context menu
+    /// that lets the user move the rule to a different group (or out
+    /// of any group). Optional left-indent when shown nested under a
+    /// group header.
+    @ViewBuilder
+    private func ruleRow(_ rule: Highlight, indented: Bool) -> some View {
+        HStack(spacing: 0) {
+            if indented {
+                Color.clear.frame(width: 20, height: 1)
+            }
+            HighlightRow(
+                rule: rule,
+                onToggleEnabled: { newValue in
+                    var updated = rule
+                    updated.enabled = newValue
+                    store.update(updated)
+                }
+            )
+        }
+        .contextMenu {
+            if !store.groups.isEmpty {
+                Menu("Move to group") {
+                    Button("(Ungrouped)") {
+                        var copy = rule; copy.groupId = nil
+                        store.update(copy)
+                    }
+                    Divider()
+                    ForEach(store.groups) { g in
+                        Button(g.name.isEmpty ? "Unnamed group" : g.name) {
+                            var copy = rule; copy.groupId = g.id
+                            store.update(copy)
+                        }
+                        .disabled(g.id == rule.groupId)
+                    }
+                }
+            }
+        }
+    }
+
+    /// `groupId` of the currently-selected item, if any -- used to
+    /// decide where a freshly-added rule should land. When the user
+    /// has a group (or one of its members) selected, the new rule
+    /// joins that group; otherwise it lands ungrouped.
+    private var selectedGroupId: UUID? {
+        switch selection {
+        case .group(let id): return id
+        case .rule(let id):  return store.highlights.first(where: { $0.id == id })?.groupId
+        case .none:          return nil
+        }
+    }
+
+    /// Small uppercase-text pill used in the group header to indicate
+    /// disabled state. Mirrors the `badge` inside `HighlightRow`.
+    private func badge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 8, weight: .bold, design: .monospaced))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .foregroundStyle(.secondary)
+    }
+
+    private func addRule(intoGroup groupId: UUID?) {
+        filterText = ""
+        let placeholder = listKind == .name ? "new name" : "new highlight"
+        let fresh = store.add(
+            Highlight(text: placeholder, fgColor: "#FFCC66", kind: listKind, groupId: groupId)
+        )
+        // Make sure the destination group is expanded so the user
+        // sees the new row.
+        if let gid = groupId { collapsedGroups.remove(gid) }
+        selection = .rule(fresh.id)
+    }
+
+    private func addGroup() {
+        let fresh = store.addGroup(HighlightGroup(name: "New Group"))
+        collapsedGroups.remove(fresh.id)
+        selection = .group(fresh.id)
+    }
+
     private var sortMenu: some View {
         Menu {
             ForEach(HighlightSort.allCases) { option in
@@ -179,29 +355,49 @@ struct HighlightEditorView: View {
     private var countLabel: String {
         let total = store.highlights.filter { $0.kind == listKind }.count
         if filterText.isEmpty { return "\(total)" }
-        return "\(visibleHighlights.count)/\(total)"
+        return "\(filteredRules.count)/\(total)"
     }
 
     // MARK: - Detail
 
     @ViewBuilder
     private var detail: some View {
-        if let id = selectedId, let rule = store.highlights.first(where: { $0.id == id }) {
-            HighlightDetail(rule: rule, store: store, onDelete: {
-                store.remove(id: id)
-                selectedId = store.highlights.first?.id
-            })
-            .id(id)  // reset form state when switching rows
-            .padding(16)
-        } else {
-            VStack {
-                Spacer()
-                Text("Select a highlight, or press + to add one.")
-                    .foregroundStyle(.secondary)
-                Spacer()
+        switch selection {
+        case .rule(let id):
+            if let rule = store.highlights.first(where: { $0.id == id }) {
+                HighlightDetail(rule: rule, store: store, onDelete: {
+                    store.remove(id: id)
+                    selection = store.highlights.first.map { .rule($0.id) }
+                })
+                .id(id)
+                .padding(16)
+            } else {
+                emptyDetail
             }
-            .frame(maxWidth: .infinity)
+        case .group(let id):
+            if let group = store.groups.first(where: { $0.id == id }) {
+                HighlightGroupDetail(group: group, store: store, onDelete: {
+                    store.removeGroup(id: id)
+                    selection = nil
+                })
+                .id(id)
+                .padding(16)
+            } else {
+                emptyDetail
+            }
+        case .none:
+            emptyDetail
         }
+    }
+
+    private var emptyDetail: some View {
+        VStack {
+            Spacer()
+            Text("Select a highlight or group, or press + to add one.")
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Import
@@ -216,8 +412,8 @@ struct HighlightEditorView: View {
             defer { if didScope { url.stopAccessingSecurityScopedResource() } }
             let parsed = try HighlightParser.parse(file: url)
             store.replaceAll(with: parsed)
-            selectedId = parsed.first(where: { $0.kind == listKind })?.id
-                ?? parsed.first?.id
+            selection = parsed.first(where: { $0.kind == listKind }).map { .rule($0.id) }
+                ?? parsed.first.map { .rule($0.id) }
             importError = nil
         } catch {
             importError = error.localizedDescription
@@ -537,6 +733,129 @@ private struct HighlightDetail: View {
         .overlay(Rectangle().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
         .environment(\.fontSize, 13)
         .environment(\.colorScheme, .dark)
+    }
+}
+
+// MARK: - Group detail
+
+/// Edits a `HighlightGroup`'s name, default colors, trait additions,
+/// enabled/notify toggles. Modal-commit on disappear, matching the
+/// pattern in `HighlightDetail` so typing into the name doesn't
+/// cascade through the engine.
+private struct HighlightGroupDetail: View {
+    let group: HighlightGroup
+    let store: HighlightStore
+    let onDelete: () -> Void
+
+    @State private var name: String
+    @State private var fgColor: Color
+    @State private var bgColor: Color
+    @State private var fgEnabled: Bool
+    @State private var bgEnabled: Bool
+    @State private var bold: Bool
+    @State private var italic: Bool
+    @State private var enabled: Bool
+    @State private var notify: Bool
+    @State private var didDelete: Bool = false
+
+    init(group: HighlightGroup, store: HighlightStore, onDelete: @escaping () -> Void) {
+        self.group = group
+        self.store = store
+        self.onDelete = onDelete
+        _name      = State(initialValue: group.name)
+        _fgColor   = State(initialValue: group.fgColor.flatMap { Color(hex: $0) } ?? .yellow)
+        _bgColor   = State(initialValue: group.bgColor.flatMap { Color(hex: $0) } ?? .black)
+        _fgEnabled = State(initialValue: group.fgColor != nil)
+        _bgEnabled = State(initialValue: group.bgColor != nil)
+        _bold      = State(initialValue: group.bold)
+        _italic    = State(initialValue: group.italic)
+        _enabled   = State(initialValue: group.enabled)
+        _notify    = State(initialValue: group.notify)
+    }
+
+    private var draft: HighlightGroup {
+        HighlightGroup(
+            id: group.id,
+            name: name,
+            fgColor: fgEnabled ? fgColor.hexString : nil,
+            bgColor: bgEnabled ? bgColor.hexString : nil,
+            bold: bold,
+            italic: italic,
+            enabled: enabled,
+            notify: notify
+        )
+    }
+
+    private var memberCount: Int {
+        store.highlights.filter { $0.groupId == group.id }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Toggle("Enabled", isOn: $enabled)
+                Spacer()
+                Button(role: .destructive) {
+                    didDelete = true
+                    onDelete()
+                } label: {
+                    Label("Delete group", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .help("Removes the group and detaches its rules (rules are kept).")
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Name").font(.subheadline.bold())
+                TextField("e.g. Combat events", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            HStack(spacing: 24) {
+                colorRow(title: "Default text color", isOn: $fgEnabled, color: $fgColor)
+                colorRow(title: "Default background", isOn: $bgEnabled, color: $bgColor)
+            }
+            Text("Member rules inherit these when their own color is unset.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Bold (adds to member rules)",   isOn: $bold)
+                Toggle("Italic (adds to member rules)", isOn: $italic)
+                Toggle("Notify on match",               isOn: $notify)
+                    .help("Posts a macOS notification with the matched game line when any rule in this group fires. (Hooked up in a separate commit.)")
+            }
+
+            Divider()
+
+            HStack {
+                Text("\(memberCount) member \(memberCount == 1 ? "rule" : "rules")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            Spacer()
+        }
+        .onDisappear {
+            guard !didDelete else { return }
+            if group != draft {
+                store.updateGroup(draft)
+            }
+        }
+    }
+
+    private func colorRow(title: String, isOn: Binding<Bool>, color: Binding<Color>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(title, isOn: isOn)
+            HStack(spacing: 6) {
+                ColorPicker("", selection: color, supportsOpacity: false)
+                    .labelsHidden()
+                ColorPaletteSwatches(selection: color)
+            }
+            .disabled(!isOn.wrappedValue)
+            .opacity(isOn.wrappedValue ? 1 : 0.45)
+        }
     }
 }
 
