@@ -261,13 +261,12 @@ struct StoryTextView: NSViewRepresentable {
                 if appliedLineCount > lines.count {
                     let extra = appliedLineCount - lines.count
                     let safeExtra = min(extra, lineCharLengths.count)
-                    let charsToRemove = lineCharLengths.prefix(safeExtra).reduce(0, +)
-                    if charsToRemove > 0, charsToRemove <= storage.length {
-                        let tStart = CFAbsoluteTimeGetCurrent()
-                        storage.deleteCharacters(in: NSRange(location: 0, length: charsToRemove))
-                        trimMs = (CFAbsoluteTimeGetCurrent() - tStart) * 1000
-                    }
-                    lineCharLengths.removeFirst(safeExtra)
+                    trimMs = frontTrim(
+                        lineCount: safeExtra,
+                        storage: storage,
+                        textView: textView,
+                        preserveVisibleScroll: !wasAtBottom
+                    )
                     appliedLineCount -= safeExtra
                     didFrontTrim = true
                 }
@@ -276,13 +275,12 @@ struct StoryTextView: NSViewRepresentable {
                 // (e.g., disconnect-clear). Mirror it.
                 let dropped = appliedLineCount - lines.count
                 let safeDropped = min(dropped, lineCharLengths.count)
-                let charsToRemove = lineCharLengths.prefix(safeDropped).reduce(0, +)
-                if charsToRemove > 0, charsToRemove <= storage.length {
-                    let tStart = CFAbsoluteTimeGetCurrent()
-                    storage.deleteCharacters(in: NSRange(location: 0, length: charsToRemove))
-                    trimMs = (CFAbsoluteTimeGetCurrent() - tStart) * 1000
-                }
-                lineCharLengths.removeFirst(safeDropped)
+                trimMs = frontTrim(
+                    lineCount: safeDropped,
+                    storage: storage,
+                    textView: textView,
+                    preserveVisibleScroll: !wasAtBottom
+                )
                 appliedLineCount = lines.count
                 didFrontTrim = true
             } else {
@@ -360,6 +358,67 @@ struct StoryTextView: NSViewRepresentable {
             if (preState?.gap ?? 0) < -1, let p = preState {
                 appLog("StoryTextView", p.description("pre "), level: .info)
             }
+        }
+
+        /// Drops `lineCount` lines off the front of `storage` and the
+        /// matching entries from `lineCharLengths`, returning the trim's
+        /// runtime in ms for diagnostic logging.
+        ///
+        /// When `preserveVisibleScroll` is true (the user has scrolled up
+        /// to read history), measure the height of the to-be-removed
+        /// prefix BEFORE deleting and subtract it from the clip view's
+        /// `bounds.origin.y` AFTER deleting, so the visible content
+        /// doesn't shift. Without this, every front-trim at cap causes
+        /// the user's reading position to slide upward as new lines push
+        /// the cap forward. When the user is at bottom we skip the
+        /// compensation — the existing scrollToBottom path keeps them
+        /// pinned to the tail and applying a delta would fight it.
+        private func frontTrim(
+            lineCount: Int,
+            storage: NSTextStorage,
+            textView: NSTextView,
+            preserveVisibleScroll: Bool
+        ) -> Double {
+            guard lineCount > 0, lineCount <= lineCharLengths.count else { return 0 }
+            let charsToRemove = lineCharLengths.prefix(lineCount).reduce(0, +)
+            guard charsToRemove > 0, charsToRemove <= storage.length else {
+                lineCharLengths.removeFirst(lineCount)
+                return 0
+            }
+
+            var removedHeight: CGFloat = 0
+            if preserveVisibleScroll,
+               let lm = textView.layoutManager,
+               let container = textView.textContainer {
+                let charRange = NSRange(location: 0, length: charsToRemove)
+                let glyphRange = lm.glyphRange(
+                    forCharacterRange: charRange,
+                    actualCharacterRange: nil
+                )
+                // Ensure the about-to-be-removed glyphs are laid out so the
+                // boundingRect we read back reflects their true height.
+                // Bounded by `charsToRemove` (one batch's worth of lines),
+                // so the cost is small even at cap.
+                lm.ensureLayout(forGlyphRange: glyphRange)
+                removedHeight = lm.boundingRect(
+                    forGlyphRange: glyphRange,
+                    in: container
+                ).height
+            }
+
+            let tStart = CFAbsoluteTimeGetCurrent()
+            storage.deleteCharacters(in: NSRange(location: 0, length: charsToRemove))
+            let trimMs = (CFAbsoluteTimeGetCurrent() - tStart) * 1000
+            lineCharLengths.removeFirst(lineCount)
+
+            if preserveVisibleScroll, removedHeight > 0,
+               let clip = scrollView?.contentView {
+                let newY = max(0, clip.bounds.origin.y - removedHeight)
+                clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: newY))
+                scrollView?.reflectScrolledClipView(clip)
+            }
+
+            return trimMs
         }
 
         private var isAtBottom: Bool {

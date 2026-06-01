@@ -46,6 +46,15 @@ struct CommandTextField: NSViewRepresentable {
 
         if field.stringValue != text {
             field.stringValue = text
+            // NSTextField selects-all on programmatic stringValue updates
+            // while focused, so up-arrow history recall (and macro template
+            // fills) would land with the entire line highlighted. Collapse
+            // the selection to a caret at the end so the user can keep
+            // typing immediately.
+            if let editor = field.currentEditor() {
+                let len = (text as NSString).length
+                editor.selectedRange = NSRange(location: len, length: 0)
+            }
         }
         field.placeholderString = placeholder
         field.isEnabled = isEnabled
@@ -76,6 +85,7 @@ struct CommandTextField: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
+    @MainActor
     final class Coordinator: NSObject, NSTextFieldDelegate, CommandTextFieldCallbacks {
         var parent: CommandTextField
 
@@ -140,6 +150,7 @@ struct CommandTextField: NSViewRepresentable {
     }
 }
 
+@MainActor
 protocol CommandTextFieldCallbacks: AnyObject {
     func handleSpecialKey(_ event: NSEvent) -> Bool
 }
@@ -209,8 +220,13 @@ final class CommandNSTextField: NSTextField {
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                guard let self else { return }
-                self.window?.makeFirstResponder(self)
+                // `addObserver`'s closure is typed @Sendable, but
+                // `queue: .main` means it actually fires on main —
+                // assert that so we can touch main-actor state directly.
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.window?.makeFirstResponder(self)
+                }
             }
         )
 

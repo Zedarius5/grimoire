@@ -42,7 +42,7 @@ private final class AppLogger: @unchecked Sendable {
             if FileManager.default.fileExists(atPath: logURL.path) {
                 if let h = try? FileHandle(forWritingTo: logURL) {
                     defer { try? h.close() }
-                    try? h.seekToEnd()
+                    _ = try? h.seekToEnd()
                     try? h.write(contentsOf: Data(header.utf8))
                 }
             } else {
@@ -59,7 +59,7 @@ private final class AppLogger: @unchecked Sendable {
             if FileManager.default.fileExists(atPath: logURL.path) {
                 if let h = try? FileHandle(forWritingTo: logURL) {
                     defer { try? h.close() }
-                    try? h.seekToEnd()
+                    _ = try? h.seekToEnd()
                     try? h.write(contentsOf: data)
                 }
             } else {
