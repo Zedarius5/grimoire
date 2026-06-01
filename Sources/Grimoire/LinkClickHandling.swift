@@ -12,13 +12,43 @@ extension LinkRef {
     /// Returns a `grimoire://` URL encoding everything we need to resolve
     /// this link at click time. Returns nil for links with no actionable
     /// info (no coord, no href, no exist, no noun, no direction value).
-    func clickURL() -> URL? {
+    ///
+    /// `fallbackText` is the run's visible text. SF/Wrayth's `<d>VERB</d>`
+    /// convention (no `cmd` attribute, no `exist`/`noun`) means "clicking
+    /// sends the visible text as a command" — e.g. `<d>ASCENSION LEARN
+    /// CONFIRM</d>` clicked = sending "ASCENSION LEARN CONFIRM". Without
+    /// the fallback, those clicks were dead.
+    func clickURL(fallbackText: String? = nil) -> URL? {
         var components = URLComponents()
         components.scheme = "grimoire"
 
         if let href, !href.isEmpty {
             components.host = "href"
             components.queryItems = [URLQueryItem(name: "url", value: href)]
+            return components.url
+        }
+
+        // `<d cmd='X'>...</d>` (and rarely `<a cmd='X'>...</a>`) carry the
+        // click target verbatim. Route those through the `cmd` host so the
+        // handler sends them as-is, no cmdlist lookup. Without this, every
+        // gem/shop/store row in the feed (and the `go east`/`go out`
+        // direction links) clicks were silently no-ops because exist/noun
+        // were empty on those tags.
+        if let cmd, !cmd.isEmpty {
+            components.host = "cmd"
+            components.queryItems = [URLQueryItem(name: "value", value: cmd)]
+            return components.url
+        }
+
+        // Bare `<d>VERB</d>` with no attributes: the visible text IS the
+        // command. Only do this for direction-kind links so we don't try
+        // to send entity descriptions ("pink-nosed grey and white kitten")
+        // as commands — entities go through the cli/dir paths below.
+        if kind == .direction,
+           let text = fallbackText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty {
+            components.host = "cmd"
+            components.queryItems = [URLQueryItem(name: "value", value: text)]
             return components.url
         }
 
@@ -94,6 +124,15 @@ struct GrimoireLinkRouter {
         case "href":
             if let raw = params["url"], let target = URL(string: raw) {
                 NSWorkspace.shared.open(target)
+            }
+            return .handled
+
+        case "cmd":
+            // Verbatim command carried on the tag's `cmd` attribute. The
+            // server already chose this string for the user; we just send it.
+            if let value = params["value"], !value.isEmpty {
+                client.echoLocal("> \(value)")
+                client.send(value)
             }
             return .handled
 

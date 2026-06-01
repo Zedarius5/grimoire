@@ -373,7 +373,8 @@ public final class StreamRenderer {
                     noun: attrs["noun"],
                     kind: kind,
                     coord: attrs["coord"],
-                    href: attrs["href"]
+                    href: attrs["href"],
+                    cmd: attrs["cmd"]
                 ))
             }
         case "prompt" where !selfClosing:

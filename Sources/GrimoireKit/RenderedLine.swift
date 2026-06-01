@@ -64,19 +64,26 @@ public struct LinkRef: Equatable, Hashable, Sendable {
     /// `<a href='https://...'>` — an external URL the click should open
     /// directly in the user's browser, bypassing the cmdlist lookup.
     public var href: String?
+    /// `<d cmd='X'>...</d>` — the literal command string to send when
+    /// this link is clicked. Carried directly on the tag (no cmdlist
+    /// lookup needed). Used by `<d>` links almost exclusively, but the
+    /// server occasionally puts a `cmd` on an `<a>` too.
+    public var cmd: String?
 
     public init(
         exist: String,
         noun: String?,
         kind: LinkKind,
         coord: String? = nil,
-        href: String? = nil
+        href: String? = nil,
+        cmd: String? = nil
     ) {
         self.exist = exist
         self.noun = noun
         self.kind = kind
         self.coord = coord
         self.href = href
+        self.cmd = cmd
     }
 }
 

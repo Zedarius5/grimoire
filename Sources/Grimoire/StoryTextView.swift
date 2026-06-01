@@ -658,7 +658,7 @@ private func appendLine(
             attrs[.backgroundColor] = c
         }
 
-        if let link = s.link, let url = link.clickURL() {
+        if let link = s.link, let url = link.clickURL(fallbackText: run.text) {
             attrs[.link] = url
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
             attrs[.underlineColor] = fg

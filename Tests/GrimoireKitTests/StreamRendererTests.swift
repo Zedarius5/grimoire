@@ -152,6 +152,18 @@ struct StreamRendererTests {
         #expect(runs.first { $0.text == "north" }?.style.link?.kind == .direction)
     }
 
+    @Test("<d cmd='...'> link carries cmd attribute for click dispatch")
+    func directionLinkPreservesCmd() {
+        let r = StreamRenderer()
+        let events = r.render(
+            line: "Gemstone 1: <d cmd='gem equip 1'>an ovate ice blue jewel</d>"
+        )
+        let runs = events.first?.line.runs ?? []
+        let linked = runs.first { $0.text == "an ovate ice blue jewel" }
+        #expect(linked?.style.link?.cmd == "gem equip 1")
+        #expect(linked?.style.link?.kind == .direction)
+    }
+
     // MARK: - Invisible stack
 
     @Test("<component> contents are suppressed from the feed")
