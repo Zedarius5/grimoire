@@ -169,6 +169,7 @@ final class CommandNSTextField: NSTextField {
     }
 
     private var focusObservers: [NSObjectProtocol] = []
+    private var clickMonitor: Any?
 
     // No deinit cleanup — NSNotificationCenter holds observer tokens for
     // the lifetime of this object, and AppKit views aren't normally torn
@@ -203,13 +204,16 @@ final class CommandNSTextField: NSTextField {
             NotificationCenter.default.removeObserver(token)
         }
         focusObservers.removeAll()
+        if let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
+        }
         guard let window else { return }
 
         // Make the field the first responder on initial appearance so the
         // user can start typing immediately after the app opens.
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.window?.makeFirstResponder(self)
+            self?.reclaimFocus()
         }
 
         // When the window becomes key again (user Cmd-Tabs back to Grimoire),
@@ -224,11 +228,40 @@ final class CommandNSTextField: NSTextField {
                 // `queue: .main` means it actually fires on main —
                 // assert that so we can touch main-actor state directly.
                 MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.window?.makeFirstResponder(self)
+                    self?.reclaimFocus()
                 }
             }
         )
+
+        // Application-level becomeActive is more reliable than per-window
+        // didBecomeKey on Cmd-Tab — sometimes AppKit re-sets the first
+        // responder after the per-window event fires. Catching both
+        // covers the cases where one or the other misses.
+        focusObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.reclaimFocus()
+                }
+            }
+        )
+
+        // Window-level click monitor: any mouse-down in this window
+        // ends up routing focus back to the input, EXCEPT when the
+        // click landed on another editable text editor (highlight
+        // editor's match-text field, connect form, etc.). Cheap --
+        // runs after the click is processed so links / selection still
+        // work first, then we reclaim.
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self, event.window === self.window else { return event }
+            DispatchQueue.main.async { [weak self] in
+                self?.reclaimFocusUnlessAnotherFieldFocused()
+            }
+            return event
+        }
 
         // After any menu finishes tracking (context menu, popover, etc.),
         // the previous first responder is often nil. Reclaim it.
@@ -247,6 +280,35 @@ final class CommandNSTextField: NSTextField {
                 }
             }
         )
+    }
+
+    /// Unconditional focus reclaim. Used by window/app activation paths
+    /// where we know nothing else is competing for focus.
+    private func reclaimFocus() {
+        guard let win = window, win.isKeyWindow else { return }
+        if win.firstResponder !== currentEditor() {
+            win.makeFirstResponder(self)
+        }
+    }
+
+    /// Focus reclaim that respects another editable text editor in the
+    /// same window — used by the click monitor so clicking into, e.g.,
+    /// the highlight editor's match-text field doesn't bounce focus
+    /// back to the game's input.
+    private func reclaimFocusUnlessAnotherFieldFocused() {
+        guard let win = window, win.isKeyWindow else { return }
+        // If a different field's editor (not ours) took focus, leave it.
+        if let fr = win.firstResponder as? NSText, fr !== currentEditor(), fr.isEditable {
+            return
+        }
+        // Some text fields use NSTextField (not NSText) as first responder
+        // when their field-editor isn't installed yet. Cover that too.
+        if let other = win.firstResponder as? NSTextField, other !== self {
+            return
+        }
+        if win.firstResponder !== currentEditor() {
+            win.makeFirstResponder(self)
+        }
     }
 
     private func applyInsertionPointColor() {

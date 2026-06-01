@@ -25,6 +25,13 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var wholeWord: Bool
     public var enabled: Bool
     public var kind: HighlightKind
+    /// When true, `text` is interpreted as a pattern with two shorthand
+    /// tokens (`#` matches one or more digits; `{s}` matches an optional
+    /// `s`) and everything else taken literally. So `(# hidden disk{s})`
+    /// matches `(1 hidden disk)`, `(256 hidden disks)`, and so on with a
+    /// single rule. Compiles to an `NSRegularExpression` cached per
+    /// pattern string in `HighlightProcessor`.
+    public var usesPattern: Bool
 
     public init(
         id: UUID = UUID(),
@@ -35,7 +42,8 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         caseSensitive: Bool = false,
         wholeWord: Bool = false,
         enabled: Bool = true,
-        kind: HighlightKind = .text
+        kind: HighlightKind = .text,
+        usesPattern: Bool = false
     ) {
         self.id = id
         self.text = text
@@ -46,12 +54,14 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.wholeWord = wholeWord
         self.enabled = enabled
         self.kind = kind
+        self.usesPattern = usesPattern
     }
 
-    // Custom decoding so configs saved before `kind` existed still load —
-    // anything missing the field is treated as a regular text highlight.
+    // Custom decoding so configs saved before `kind` / `usesPattern`
+    // existed still load -- anything missing those fields gets a
+    // backward-compatible default (text kind, literal matching).
     private enum CodingKeys: String, CodingKey {
-        case id, text, fgColor, bgColor, entireLine, caseSensitive, wholeWord, enabled, kind
+        case id, text, fgColor, bgColor, entireLine, caseSensitive, wholeWord, enabled, kind, usesPattern
     }
 
     public init(from decoder: Decoder) throws {
@@ -65,6 +75,7 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.wholeWord     = try c.decode(Bool.self,  forKey: .wholeWord)
         self.enabled       = try c.decode(Bool.self,  forKey: .enabled)
         self.kind          = (try? c.decode(HighlightKind.self, forKey: .kind)) ?? .text
+        self.usesPattern   = (try? c.decode(Bool.self, forKey: .usesPattern)) ?? false
     }
 }
 

@@ -193,6 +193,7 @@ private struct HighlightRow: View {
     @ViewBuilder
     private var metaBadges: some View {
         HStack(spacing: 4) {
+            if rule.usesPattern   { badge("REGEX") }
             if rule.entireLine    { badge("LINE") }
             if rule.caseSensitive { badge("CASE") }
             if rule.wholeWord     { badge("WORD") }
@@ -226,6 +227,7 @@ private struct HighlightDetail: View {
     @State private var caseSensitive: Bool
     @State private var wholeWord: Bool
     @State private var enabled: Bool
+    @State private var usesPattern: Bool
     /// True when the row was deleted via the trash button. Suppresses
     /// the `.onDisappear` flush so we don't immediately resurrect the
     /// deleted rule by pushing the local draft back into the store.
@@ -244,6 +246,7 @@ private struct HighlightDetail: View {
         _caseSensitive = State(initialValue: rule.caseSensitive)
         _wholeWord     = State(initialValue: rule.wholeWord)
         _enabled       = State(initialValue: rule.enabled)
+        _usesPattern   = State(initialValue: rule.usesPattern)
     }
 
     /// Reflects the form state without going through `store` — keeps the
@@ -258,7 +261,8 @@ private struct HighlightDetail: View {
             caseSensitive: caseSensitive,
             wholeWord: wholeWord,
             enabled: enabled,
-            kind: rule.kind
+            kind: rule.kind,
+            usesPattern: usesPattern
         )
     }
 
@@ -278,9 +282,14 @@ private struct HighlightDetail: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Match text").font(.subheadline.bold())
-                TextField("e.g. greedy gremlins", text: $text)
+                TextField(matchPlaceholder, text: $text)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
+                if usesPattern {
+                    Text("Pattern: `#` = any number, `{s}` = optional `s`. Everything else is literal.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             HStack(spacing: 24) {
@@ -292,6 +301,7 @@ private struct HighlightDetail: View {
                 Toggle("Highlight entire line", isOn: $entireLine)
                 Toggle("Case sensitive",        isOn: $caseSensitive)
                 Toggle("Whole word only",       isOn: $wholeWord)
+                Toggle("Pattern matching (#, {s})", isOn: $usesPattern)
             }
 
             Divider()
@@ -322,6 +332,12 @@ private struct HighlightDetail: View {
                 store.update(draftHighlight)
             }
         }
+    }
+
+    private var matchPlaceholder: String {
+        usesPattern
+            ? "e.g. (# hidden disk{s})"
+            : "e.g. greedy gremlins"
     }
 
     private func colorRow(title: String, isOn: Binding<Bool>, color: Binding<Color>) -> some View {
