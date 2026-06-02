@@ -63,9 +63,9 @@ struct PerfDebugView: View {
 
     private var mainThreadSection: some View {
         sectionVStack("Main thread") {
-            row(label: "Latest main-thread lag", value: "\(snapshot.mainLagMs) ms", warn: snapshot.mainLagMs > 500)
-            row(label: "Lag spikes (>500ms) in last minute", value: "\(snapshot.lagSpikesLastMinute)", warn: snapshot.lagSpikesLastMinute > 0)
-            Text("Lag > ~16ms means a dropped frame; > 500ms is a visible stall. The heartbeat runs on a background queue and waits to be picked up by main, so a sustained gap = main is wedged.")
+            row(label: "Latest main-thread lag", value: "\(snapshot.mainLagMs) ms", warn: snapshot.mainLagMs > 100)
+            row(label: "Lag spikes (>100ms) in last minute", value: "\(snapshot.lagSpikesLastMinute)", warn: snapshot.lagSpikesLastMinute > 0)
+            Text("Lag is dispatch-to-run latency for a heartbeat closure. > ~16ms = dropped frame, > 100ms = visible stall. If the gap grows past one interval the heartbeat is wedged behind something heavy.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

@@ -20,7 +20,16 @@ public final class Diagnostics: @unchecked Sendable {
     // MARK: - State (lock-guarded)
 
     private let lock = NSLock()
-    private var lastMainTick: Date = Date()
+    /// Most recent measured dispatch-to-run latency for a heartbeat
+    /// closure on the main queue, in ms. Low = responsive; high =
+    /// backpressure or recent stall. Updated by each heartbeat
+    /// closure when it actually runs on main.
+    private var lastTickLatencyMs: Double = 0
+    /// Time (CFAbsoluteTime) the most recent heartbeat closure
+    /// completed on main. Used to detect ongoing wedges: if this
+    /// hasn't advanced in over an interval, main IS wedged right
+    /// now (the dispatched closures are stuck behind something).
+    private var lastTickCompletedAt: TimeInterval = CFAbsoluteTimeGetCurrent()
     private var paneEvalCounts: [String: Int] = [:]
     /// StoryTextView reconcile durations (ms) recorded during the current
     /// rolling window. Capped to keep memory bounded under bursty traffic.
@@ -92,16 +101,6 @@ public final class Diagnostics: @unchecked Sendable {
 
     // MARK: - Heartbeat
 
-    /// Called from the heartbeat block once it lands on main, to mark "main
-    /// thread was responsive at this moment." If main is wedged the block
-    /// queues but never runs, so `lastMainTick` falls behind real time and
-    /// the heartbeat's next firing logs the gap.
-    fileprivate func recordMainTick() {
-        lock.lock()
-        lastMainTick = Date()
-        lock.unlock()
-    }
-
     private func startHeartbeat() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + Self.interval, repeating: Self.interval)
@@ -113,16 +112,36 @@ public final class Diagnostics: @unchecked Sendable {
     }
 
     private func heartbeat() {
-        // Queue a ping to main; it'll run as soon as main is responsive.
+        // Dispatch a ping to main and measure how long it actually waits
+        // before running. `dispatchedAt` is captured into the closure so
+        // each heartbeat measures ITS OWN latency (not a shared running
+        // average that gets confused by stacked closures).
+        let dispatchedAt = CFAbsoluteTimeGetCurrent()
         DispatchQueue.main.async { [weak self] in
-            self?.recordMainTick()
+            guard let self else { return }
+            let completedAt = CFAbsoluteTimeGetCurrent()
+            let latencyMs = (completedAt - dispatchedAt) * 1000
+            self.lock.lock()
+            self.lastTickLatencyMs = latencyMs
+            self.lastTickCompletedAt = completedAt
+            self.lock.unlock()
         }
 
         let memMB = currentRssMB()
 
         // Snapshot and reset interval counters.
         lock.lock()
-        let mainLagMs = Int(Date().timeIntervalSince(lastMainTick) * 1000)
+        // Two paths to a high-lag reading:
+        // (a) The most recent closure took a long time to drain
+        //     (latest latency, recorded by the closure itself).
+        // (b) Main is wedged RIGHT NOW: closures dispatched recently
+        //     haven't completed, so `lastTickCompletedAt` is stale.
+        // The displayed lag is the max of those so an ongoing wedge
+        // grows visibly even if the latest-recorded latency is from
+        // before the wedge.
+        let nowAbs = CFAbsoluteTimeGetCurrent()
+        let timeSinceLastTickMs = (nowAbs - lastTickCompletedAt) * 1000
+        let mainLagMs = Int(max(lastTickLatencyMs, timeSinceLastTickMs))
         let evalSnapshot = paneEvalCounts
         paneEvalCounts.removeAll()
         let reconciles = reconcileSamples
@@ -136,7 +155,9 @@ public final class Diagnostics: @unchecked Sendable {
         if recentLagReadingsMs.count > lastMinuteCount {
             recentLagReadingsMs.removeFirst(recentLagReadingsMs.count - lastMinuteCount)
         }
-        let lagSpikes = recentLagReadingsMs.filter { $0 > 500 }.count
+        // Threshold matches the per-tick log threshold: anything over
+        // 100ms is a perceptible stall worth counting.
+        let lagSpikes = recentLagReadingsMs.filter { $0 > 100 }.count
         let snapshot = PerfSnapshot(
             mainLagMs: mainLagMs,
             lagSpikesLastMinute: lagSpikes,
@@ -160,13 +181,15 @@ public final class Diagnostics: @unchecked Sendable {
         lock.unlock()
 
         // Steady state: mainLag tiny, no pane churn — skip log. Anything
-        // interesting still gets a line.
+        // interesting still gets a line. With the new latency-based
+        // measurement, mainLag in normal operation is single-digit ms,
+        // so a 100ms threshold reliably catches real backpressure.
         let topEvals = evalSnapshot
             .sorted { $0.value > $1.value }
             .prefix(6)
             .map { "\($0.key)=\($0.value)" }
             .joined(separator: " ")
-        let interesting = mainLagMs > 500 || !evalSnapshot.isEmpty
+        let interesting = mainLagMs > 100 || !evalSnapshot.isEmpty
         if interesting {
             appLog(
                 "Diagnostics",
