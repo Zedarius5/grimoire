@@ -3,85 +3,9 @@ import AppKit
 import SwiftUI
 import GrimoireKit
 
-/// Custom URL scheme we attach to entity/direction runs so SwiftUI's
-/// `Text(AttributedString)` treats them as clickable. The URL itself is
-/// inert — `ContentView`'s `.environment(\.openURL)` handler intercepts
-/// it, decodes the embedded link info, looks up the command template in
-/// `LichClient.cmdlist`, and sends the resolved command.
-extension LinkRef {
-    /// Returns a `grimoire://` URL encoding everything we need to resolve
-    /// this link at click time. Returns nil for links with no actionable
-    /// info (no coord, no href, no exist, no noun, no direction value).
-    ///
-    /// `fallbackText` is the run's visible text. SF/Wrayth's `<d>VERB</d>`
-    /// convention (no `cmd` attribute, no `exist`/`noun`) means "clicking
-    /// sends the visible text as a command" — e.g. `<d>ASCENSION LEARN
-    /// CONFIRM</d>` clicked = sending "ASCENSION LEARN CONFIRM". Without
-    /// the fallback, those clicks were dead.
-    func clickURL(fallbackText: String? = nil) -> URL? {
-        var components = URLComponents()
-        components.scheme = "grimoire"
-
-        if let href, !href.isEmpty {
-            components.host = "href"
-            components.queryItems = [URLQueryItem(name: "url", value: href)]
-            return components.url
-        }
-
-        // `<d cmd='X'>...</d>` (and rarely `<a cmd='X'>...</a>`) carry the
-        // click target verbatim. Route those through the `cmd` host so the
-        // handler sends them as-is, no cmdlist lookup. Without this, every
-        // gem/shop/store row in the feed (and the `go east`/`go out`
-        // direction links) clicks were silently no-ops because exist/noun
-        // were empty on those tags.
-        if let cmd, !cmd.isEmpty {
-            components.host = "cmd"
-            components.queryItems = [URLQueryItem(name: "value", value: cmd)]
-            return components.url
-        }
-
-        // Bare `<d>VERB</d>` with no attributes: the visible text IS the
-        // command. Only do this for direction-kind links so we don't try
-        // to send entity descriptions ("pink-nosed grey and white kitten")
-        // as commands — entities go through the cli/dir paths below.
-        if kind == .direction,
-           let text = fallbackText?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !text.isEmpty {
-            components.host = "cmd"
-            components.queryItems = [URLQueryItem(name: "value", value: text)]
-            return components.url
-        }
-
-        switch kind {
-        case .entity:
-            components.host = "cli"
-            var items: [URLQueryItem] = []
-            if let coord, !coord.isEmpty {
-                items.append(URLQueryItem(name: "coord", value: coord))
-            }
-            if !exist.isEmpty {
-                items.append(URLQueryItem(name: "exist", value: exist))
-            }
-            if let noun, !noun.isEmpty {
-                items.append(URLQueryItem(name: "noun", value: noun))
-            }
-            // Need *something* to click against — if coord/exist/noun are
-            // all empty, there's no way to issue a command.
-            guard !items.isEmpty else { return nil }
-            components.queryItems = items
-            return components.url
-
-        case .direction:
-            components.host = "dir"
-            // For direction links the exist field carries the direction
-            // (e.g. "north", "out"). Fall back to the noun.
-            let value = exist.isEmpty ? (noun ?? "") : exist
-            guard !value.isEmpty else { return nil }
-            components.queryItems = [URLQueryItem(name: "value", value: value)]
-            return components.url
-        }
-    }
-}
+// Note: `LinkRef.clickURL` moved to GrimoireKit (LinkRef+ClickURL.swift)
+// so it can be unit-tested. The router below consumes the resulting
+// `grimoire://` URLs.
 
 /// Holds onto the per-menu-item command + client reference. NSMenuItem
 /// targets must be reference types; we attach this to `representedObject`

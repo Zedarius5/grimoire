@@ -265,8 +265,9 @@ public final class MacroEngine: ObservableObject {
 
     /// One step of a macro action: either a command to send, or a pause
     /// (in seconds) to wait before the next step. The tokenizer turns an
-    /// action string into a list of these in order.
-    private enum Segment {
+    /// action string into a list of these in order. Internal (not
+    /// private) so tests can exercise the parser directly.
+    enum Segment: Equatable {
         case send(String)
         case pause(Double)
     }
@@ -276,7 +277,9 @@ public final class MacroEngine: ObservableObject {
     /// pauses N seconds. `\x` at the start of a piece is stripped (it
     /// means "clear input first," which is implicit when we send a
     /// command without inheriting any input-field state).
-    private func tokenize(_ action: String) -> [Segment] {
+    /// Internal so tests can call it directly without depending on the
+    /// async `executeAction` path's Task.sleep.
+    func tokenize(_ action: String) -> [Segment] {
         var segments: [Segment] = []
         for piece in action.components(separatedBy: "\\r") {
             var s = piece
