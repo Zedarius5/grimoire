@@ -24,6 +24,12 @@ struct HighlightEditorView: View {
     /// expanded; we track the negative because most users will leave
     /// groups expanded most of the time.
     @State private var collapsedGroups: Set<UUID> = []
+    /// When a new rule or group is created, the parent sets this to
+    /// the freshly-added id. The matching detail view consumes it on
+    /// `.onAppear` to immediately focus its primary text field, so
+    /// the user can just start typing the name / match text without
+    /// clicking into the field first.
+    @State private var pendingFocusForId: UUID? = nil
 
     /// Rules that match the active kind tab + current filter, sorted by
     /// the current sort order. Group affiliation is preserved on the
@@ -332,20 +338,23 @@ struct HighlightEditorView: View {
 
     private func addRule(intoGroup groupId: UUID?) {
         filterText = ""
-        let placeholder = listKind == .name ? "new name" : "new highlight"
+        // Start with empty text so the user can just type the rule's
+        // text without first deleting boilerplate. The list row's
+        // "(no text)" placeholder + the TextField's prompt cover the
+        // visual gap until they type something.
         let fresh = store.add(
-            Highlight(text: placeholder, fgColor: "#FFCC66", kind: listKind, groupId: groupId)
+            Highlight(text: "", fgColor: "#FFCC66", kind: listKind, groupId: groupId)
         )
-        // Make sure the destination group is expanded so the user
-        // sees the new row.
         if let gid = groupId { collapsedGroups.remove(gid) }
         selection = .rule(fresh.id)
+        pendingFocusForId = fresh.id
     }
 
     private func addGroup() {
-        let fresh = store.addGroup(HighlightGroup(name: "New Group"))
+        let fresh = store.addGroup(HighlightGroup(name: ""))
         collapsedGroups.remove(fresh.id)
         selection = .group(fresh.id)
+        pendingFocusForId = fresh.id
     }
 
     private var sortMenu: some View {
@@ -383,10 +392,15 @@ struct HighlightEditorView: View {
         switch selection {
         case .rule(let id):
             if let rule = store.highlights.first(where: { $0.id == id }) {
-                HighlightDetail(rule: rule, store: store, onDelete: {
-                    store.remove(id: id)
-                    selection = store.highlights.first.map { .rule($0.id) }
-                })
+                HighlightDetail(
+                    rule: rule,
+                    store: store,
+                    pendingFocusForId: $pendingFocusForId,
+                    onDelete: {
+                        store.remove(id: id)
+                        selection = store.highlights.first.map { .rule($0.id) }
+                    }
+                )
                 .id(id)
                 .padding(16)
             } else {
@@ -394,10 +408,15 @@ struct HighlightEditorView: View {
             }
         case .group(let id):
             if let group = store.groups.first(where: { $0.id == id }) {
-                HighlightGroupDetail(group: group, store: store, onDelete: {
-                    store.removeGroup(id: id)
-                    selection = nil
-                })
+                HighlightGroupDetail(
+                    group: group,
+                    store: store,
+                    pendingFocusForId: $pendingFocusForId,
+                    onDelete: {
+                        store.removeGroup(id: id)
+                        selection = nil
+                    }
+                )
                 .id(id)
                 .padding(16)
             } else {
@@ -582,8 +601,10 @@ private struct HighlightRow: View {
 private struct HighlightDetail: View {
     let rule: Highlight
     let store: HighlightStore
+    @Binding var pendingFocusForId: UUID?
     let onDelete: () -> Void
 
+    @FocusState private var matchTextFocused: Bool
     @State private var text: String
     @State private var fgColor: Color
     @State private var bgColor: Color
@@ -610,9 +631,10 @@ private struct HighlightDetail: View {
     /// persisted; gone when the user navigates away from the row.
     @State private var testInput: String = ""
 
-    init(rule: Highlight, store: HighlightStore, onDelete: @escaping () -> Void) {
+    init(rule: Highlight, store: HighlightStore, pendingFocusForId: Binding<UUID?>, onDelete: @escaping () -> Void) {
         self.rule = rule
         self.store = store
+        self._pendingFocusForId = pendingFocusForId
         self.onDelete = onDelete
         _text          = State(initialValue: rule.text)
         // The color picker's @State always reflects the user's last
@@ -686,6 +708,7 @@ private struct HighlightDetail: View {
                 TextField(matchPlaceholder, text: $text)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
+                    .focused($matchTextFocused)
                 if usesPattern {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Regex: `\\d` digit · `\\w` word char · `.` any · `?` optional · `+` 1+ · `*` 0+ · `[abc]` class · `(a|b)` alt. Escape `( ) . + ? * | [ ]` to match them literally.")
@@ -785,6 +808,17 @@ private struct HighlightDetail: View {
             // new group from the dropdown, mirroring the spell-preset
             // editor's behavior.
             store.update(draftHighlight)
+        }
+        .onAppear {
+            // When this rule was just created via "+ New highlight",
+            // jump straight to typing the match text. Dispatched so
+            // the field has finished mounting before we try to focus.
+            if pendingFocusForId == rule.id {
+                pendingFocusForId = nil
+                DispatchQueue.main.async {
+                    matchTextFocused = true
+                }
+            }
         }
         .onDisappear {
             // Modal commit for the rest of the form: the draft only
@@ -1038,8 +1072,10 @@ private struct HighlightDetail: View {
 private struct HighlightGroupDetail: View {
     let group: HighlightGroup
     let store: HighlightStore
+    @Binding var pendingFocusForId: UUID?
     let onDelete: () -> Void
 
+    @FocusState private var nameFocused: Bool
     @State private var name: String
     @State private var fgColor: Color
     @State private var bgColor: Color
@@ -1056,9 +1092,10 @@ private struct HighlightGroupDetail: View {
     @State private var stashedFgHex: String?
     @State private var stashedBgHex: String?
 
-    init(group: HighlightGroup, store: HighlightStore, onDelete: @escaping () -> Void) {
+    init(group: HighlightGroup, store: HighlightStore, pendingFocusForId: Binding<UUID?>, onDelete: @escaping () -> Void) {
         self.group = group
         self.store = store
+        self._pendingFocusForId = pendingFocusForId
         self.onDelete = onDelete
         _name      = State(initialValue: group.name)
         // Prefer active color, then stash, then default. Lets the
@@ -1122,6 +1159,7 @@ private struct HighlightGroupDetail: View {
                 Text("Name").font(.subheadline.bold())
                 TextField("e.g. Combat events", text: $name)
                     .textFieldStyle(.roundedBorder)
+                    .focused($nameFocused)
             }
 
             HStack(spacing: 24) {
@@ -1165,6 +1203,17 @@ private struct HighlightGroupDetail: View {
             guard !didDelete else { return }
             if group != draft {
                 store.updateGroup(draft)
+            }
+        }
+        .onAppear {
+            // Auto-focus the Name field when this group was just
+            // created via "+ New group". Dispatched so the field is
+            // mounted before we try to focus.
+            if pendingFocusForId == group.id {
+                pendingFocusForId = nil
+                DispatchQueue.main.async {
+                    nameFocused = true
+                }
             }
         }
     }
