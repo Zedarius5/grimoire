@@ -627,15 +627,17 @@ struct ContentView: View {
         VStack(spacing: 0) {
             RoomHeader(state: client.gameState)
             Group {
-                // When connected, show the live story feed (or the
-                // empty-state placeholder if no lines have arrived yet
-                // — e.g., the brief window between `.connecting` becoming
-                // `.connected` and the first server emit). Otherwise show
-                // the animated GRIMOIRE sigil as a "waiting" screen.
+                // When connected, show the live story feed. The empty-state
+                // placeholder is OVERLAID via ZStack rather than swapped in
+                // via an if/else branch -- swapping unmounts GameView, which
+                // destroys the underlying NSTextView, and the next time the
+                // feed has content we mount a fresh NSTextView at scroll
+                // y=0. Any brief moment mainLines goes empty (a reconnect
+                // wipe, a stale-clear race) was visibly "story window jumps
+                // to the top" before this -- the overlay keeps the NSView
+                // alive across the transition.
                 if uiShowsActiveSession {
-                    if client.mainLines.isEmpty {
-                        emptyGamePlaceholder
-                    } else {
+                    ZStack {
                         GameView(
                             lines: client.mainLines,
                             revision: client.revision(for: "main"),
@@ -644,6 +646,9 @@ struct ContentView: View {
                             }
                         )
                         .equatable()
+                        if client.mainLines.isEmpty {
+                            emptyGamePlaceholder
+                        }
                     }
                 } else {
                     SigilView()

@@ -25,6 +25,13 @@ struct StoryTextView: NSViewRepresentable {
     @Environment(\.fontSize) private var fontSize
 
     func makeNSView(context: Context) -> NSScrollView {
+        // Breadcrumb: SwiftUI is creating a fresh NSScrollView/NSTextView
+        // pair. Should happen ONCE per pane mount; if you see this fire
+        // during normal gameplay it means a parent view dropped+remounted
+        // us (the most common cause is an if/else branch that swaps the
+        // view in/out -- see the ZStack overlay pattern in ContentView).
+        // Scroll position resets to y=0 here by definition.
+        appLog("StoryTextView", "makeNSView: creating fresh NSTextView", level: .info)
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
