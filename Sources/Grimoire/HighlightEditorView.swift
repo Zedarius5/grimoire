@@ -62,15 +62,28 @@ struct HighlightEditorView: View {
         let lower = term.lowercased()
         if lower.hasPrefix("tag:") {
             let tag = String(lower.dropFirst(4))
-            let group = rule.groupId.flatMap { groups[$0] }
+            // All tags now check the rule's OWN field. Inherited
+            // values are intentionally NOT included, because the
+            // primary use case for these tags is finding explicit
+            // overrides ("which rules in this group have their own
+            // text color set when they should be inheriting?").
+            // For "is this rule effectively bold/italic/etc?" the
+            // visual badges in the sidebar (which DO show resolved
+            // state) are the better signal.
             switch tag {
-            case "regex":  return rule.usesPattern
-            case "line":   return rule.entireLine    || (group?.entireLine    ?? false)
-            case "case":   return rule.caseSensitive || (group?.caseSensitive ?? false)
-            case "word":   return rule.wholeWord     || (group?.wholeWord     ?? false)
-            case "bold":   return rule.bold          || (group?.bold          ?? false)
-            case "italic": return rule.italic        || (group?.italic        ?? false)
-            default:       return false  // unknown tag matches nothing (strict)
+            case "regex":     return rule.usesPattern
+            case "line":      return rule.entireLine
+            case "case":      return rule.caseSensitive
+            case "word":      return rule.wholeWord
+            case "bold":      return rule.bold
+            case "italic":    return rule.italic
+            case "fg":        return rule.fgColor != nil
+            case "bg":        return rule.bgColor != nil
+            case "enabled":   return rule.enabled
+            case "disabled":  return !rule.enabled
+            case "grouped":   return rule.groupId != nil
+            case "ungrouped": return rule.groupId == nil
+            default:          return false  // unknown tag matches nothing (strict)
             }
         }
         return rule.text.localizedCaseInsensitiveContains(term)
@@ -217,10 +230,18 @@ struct HighlightEditorView: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
                 .font(.caption)
-            TextField("Filter (try tag:regex, tag:bold, ...)", text: $filterText)
+            TextField("Filter (try tag:fg, tag:grouped, ...)", text: $filterText)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
-                .help("Plain text matches the rule's text. Prefix a term with tag: to filter by flag — tag:regex, tag:line, tag:case, tag:word, tag:bold, tag:italic. Multiple terms AND together.")
+                .help("""
+                Plain text matches the rule's text. Prefix a term with tag: \
+                to filter by a rule's own setting (NOT inherited values). \
+                Tags: regex, line, case, word, bold, italic, fg (text color \
+                set), bg (bg color set), enabled, disabled, grouped, \
+                ungrouped. Multiple terms AND together — e.g. tag:fg \
+                tag:grouped finds rules in a group that have their own \
+                text color override.
+                """)
             if !filterText.isEmpty {
                 Button {
                     filterText = ""
