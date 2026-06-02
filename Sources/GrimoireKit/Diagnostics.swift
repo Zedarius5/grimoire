@@ -131,17 +131,23 @@ public final class Diagnostics: @unchecked Sendable {
 
         // Snapshot and reset interval counters.
         lock.lock()
-        // Two paths to a high-lag reading:
-        // (a) The most recent closure took a long time to drain
-        //     (latest latency, recorded by the closure itself).
-        // (b) Main is wedged RIGHT NOW: closures dispatched recently
-        //     haven't completed, so `lastTickCompletedAt` is stale.
-        // The displayed lag is the max of those so an ongoing wedge
-        // grows visibly even if the latest-recorded latency is from
-        // before the wedge.
+        // Display value: the most recent measured dispatch-to-run
+        // latency. Single-digit ms under normal operation. Bounded
+        // above by the heartbeat interval -- if main is wedged
+        // longer than that, the dispatched closure hasn't run yet
+        // and lastTickLatencyMs reflects whatever the PREVIOUS tick
+        // measured (stale).
+        //
+        // To surface in-progress wedges past the interval, add the
+        // overage of "time since last completed tick" beyond one
+        // interval. Steady state: timeSinceLastComplete ≈ interval,
+        // so overage ≈ 0 and mainLag = latency. Wedge in progress:
+        // overage grows without bound and dominates.
         let nowAbs = CFAbsoluteTimeGetCurrent()
+        let intervalMs = Self.interval * 1000
         let timeSinceLastTickMs = (nowAbs - lastTickCompletedAt) * 1000
-        let mainLagMs = Int(max(lastTickLatencyMs, timeSinceLastTickMs))
+        let wedgeOverageMs = max(0, timeSinceLastTickMs - intervalMs)
+        let mainLagMs = Int(max(lastTickLatencyMs, wedgeOverageMs))
         let evalSnapshot = paneEvalCounts
         paneEvalCounts.removeAll()
         let reconciles = reconcileSamples
