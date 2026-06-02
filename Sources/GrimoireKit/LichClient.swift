@@ -494,6 +494,11 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
             // more than ~50ms — backpressure on main is the leading
             // indicator of the SwiftUI layout wedge we're hunting.
             let runtimeMs = Int((CFAbsoluteTimeGetCurrent() - runStart) * 1000)
+            Diagnostics.shared.recordLichBatch(
+                lines: batchLineCount,
+                queueDelayMs: queueDelayMs,
+                runtimeMs: runtimeMs
+            )
             if queueDelayMs > 50 || runtimeMs > 100 {
                 let sideCount = batchLineCount - mainBatchCount
                 appLog(

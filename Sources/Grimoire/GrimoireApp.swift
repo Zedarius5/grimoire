@@ -48,6 +48,7 @@ struct GrimoireApp: App {
             CommandMenu("Debug") {
                 OpenIconBrowserMenuItem()
                 OpenWoundsDebugMenuItem()
+                OpenPerfDebugMenuItem()
             }
         }
 
@@ -79,6 +80,11 @@ struct GrimoireApp: App {
             WoundsDebugView()
         }
         .defaultSize(width: 720, height: 540)
+
+        Window("Performance", id: "perf-debug") {
+            PerfDebugView()
+        }
+        .defaultSize(width: 520, height: 600)
     }
 }
 
@@ -107,6 +113,20 @@ private struct OpenWoundsDebugMenuItem: View {
             openWindow(id: "wounds-debug")
         }
         .keyboardShortcut("w", modifiers: [.command, .option])
+    }
+}
+
+/// Menu-bar item that opens the live perf dashboard. Useful for
+/// spotting main-thread stalls / over-rendering panes during normal
+/// gameplay without dropping to Console.app + log filtering.
+private struct OpenPerfDebugMenuItem: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Performance") {
+            openWindow(id: "perf-debug")
+        }
+        .keyboardShortcut("p", modifiers: [.command, .option])
     }
 }
 

@@ -327,6 +327,7 @@ struct StoryTextView: NSViewRepresentable {
             }
 
             let elapsed = CFAbsoluteTimeGetCurrent() - started
+            Diagnostics.shared.recordReconcile(durationMs: elapsed * 1000)
             // Log when total reconcile is slow, when we did a structural
             // rebuild, OR when any single phase exceeded 5ms — the
             // last condition is what catches the "blank for a second"
