@@ -52,6 +52,7 @@ struct StatusBox: View {
     }
 
     var body: some View {
+        let _ = Diagnostics.shared.recordPaneEval("StatusBox")
         // Single horizontal row of icons sized to fill the available
         // height. We measure the container with GeometryReader and pick
         // an icon size that's the smaller of (a) the full container

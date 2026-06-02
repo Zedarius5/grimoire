@@ -23,7 +23,8 @@ struct BodyDiagram: View {
     static let totalSize = CGSize(width: 110, height: 150)
 
     var body: some View {
-        GeometryReader { geo in
+        let _ = Diagnostics.shared.recordPaneEval("BodyDiagram")
+        return GeometryReader { geo in
             ZStack {
                 SilhouetteShape()
                     .stroke(Color.white.opacity(0.28), lineWidth: 1)

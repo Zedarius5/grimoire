@@ -135,10 +135,11 @@ struct DialogPane: View {
     }
 
     var body: some View {
+        let _ = Diagnostics.shared.recordPaneEval("DialogPane:\(dialog.id)")
         // TimelineView re-renders the inner content every second, giving us a
         // reliable 1Hz tick for the per-bar countdown without any @State
         // gymnastics that fight SwiftUI's diffing.
-        TimelineView(.periodic(from: .now, by: 1.0)) { context in
+        return TimelineView(.periodic(from: .now, by: 1.0)) { context in
             let elapsed = max(0, context.date.timeIntervalSince(dialog.lastUpdated))
             renderedBody(elapsedSinceUpdate: elapsed)
         }
@@ -424,6 +425,7 @@ private struct DialogWidgetView: View {
     }
 
     var body: some View {
+        let _ = Diagnostics.shared.recordPaneEval("DialogWidget")
         switch widget {
         case .label(_, let text, _):
             // Treat "Essence N/M" labels as progress bars — the uberbar script

@@ -19,7 +19,8 @@ struct InputBar: View {
     private var isActive: Bool { client.isActive }
 
     var body: some View {
-        HStack(spacing: 8) {
+        let _ = Diagnostics.shared.recordPaneEval("InputBar")
+        return HStack(spacing: 8) {
             Text(">")
                 .font(.system(size: fontSize, design: .monospaced))
                 .foregroundStyle(isActive ? GameTheme.foreground : Color.gray.opacity(0.6))

@@ -156,7 +156,8 @@ struct ContentView: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
+        let _ = Diagnostics.shared.recordPaneEval("ContentView")
+        return VStack(spacing: 0) {
             toolbar
             Divider()
             mainSplit

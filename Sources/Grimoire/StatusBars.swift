@@ -9,6 +9,7 @@ struct RoomHeader: View {
     let state: GameState
 
     var body: some View {
+        let _ = Diagnostics.shared.recordPaneEval("RoomHeader")
         let name = state.roomName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if name.isEmpty {
@@ -46,7 +47,8 @@ struct HandsStrip: View {
     let state: GameState
 
     var body: some View {
-        HStack(spacing: 10) {
+        let _ = Diagnostics.shared.recordPaneEval("HandsStrip")
+        return HStack(spacing: 10) {
             HandCell(icon: "hand.point.left.fill",  caption: "Left",  text: state.leftHand)
             HandCell(icon: "hand.point.right.fill", caption: "Right", text: state.rightHand)
             HandCell(icon: "sparkles",              caption: "Spell", text: state.preparedSpell)
@@ -107,7 +109,8 @@ struct VitalsBar: View {
     let state: GameState
 
     var body: some View {
-        HStack(spacing: 4) {
+        let _ = Diagnostics.shared.recordPaneEval("VitalsBar")
+        return HStack(spacing: 4) {
             VitalCell(label: "Health",  value: state.health,
                       color: Color(red: 0.85, green: 0.20, blue: 0.20))
             VitalCell(label: "Mana",    value: state.mana,
@@ -161,7 +164,8 @@ struct RoundtimeBricks: View {
     private var bothActive: Bool { hardRemaining > 0 && castRemaining > 0 }
 
     var body: some View {
-        contents
+        let _ = Diagnostics.shared.recordPaneEval("RoundtimeBricks")
+        return contents
             .frame(height: Self.totalHeight, alignment: .leading)
             .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { tick in
                 // Only invalidate body when something's actually

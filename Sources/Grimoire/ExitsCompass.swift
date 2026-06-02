@@ -9,7 +9,8 @@ struct ExitsCompass: View {
     let onCommand: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 3) {
+        let _ = Diagnostics.shared.recordPaneEval("ExitsCompass")
+        return HStack(spacing: 3) {
             Grid(horizontalSpacing: 1, verticalSpacing: 1) {
                 GridRow {
                     cell("nw", label: "NW")
