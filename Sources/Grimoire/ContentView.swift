@@ -144,7 +144,6 @@ struct ContentView: View {
                         client.send(cmd)
                     }
                 )
-                .equatable()
                 VitalsBar(state: client.gameState)
             }
             .frame(maxWidth: .infinity)

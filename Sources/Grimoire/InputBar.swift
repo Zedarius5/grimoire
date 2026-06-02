@@ -1,14 +1,19 @@
 import SwiftUI
 import GrimoireKit
 
-/// Equatable so SwiftUI can skip the body call when the parent
-/// re-renders without a real change to `isActive` / `gameState`.
-/// Previously held `@ObservedObject var client: LichClient`, which
-/// subscribed the view to every LichClient publish (vitals, dialogs,
-/// lines, etc.) and forced the body to re-evaluate ~10-30x/sec
-/// regardless of Equatable. Now takes only the values it actually
-/// reads, plus an `onSend` closure for the side-effecting path.
-struct InputBar: View, Equatable {
+/// Takes only the values it actually reads (plus an `onSend` closure
+/// for the side-effecting path) rather than holding an
+/// `@ObservedObject var client: LichClient`. That keeps the view's
+/// dependency surface tight -- it doesn't get woken up on every
+/// LichClient publish, only when the values that matter change.
+///
+/// NOTE: do NOT add `.equatable()` to InputBar at the call site. The
+/// view has internal @State (`text`, `history`, `historyIndex`,
+/// `focused`) that drives visible UI updates (text field content,
+/// history recall). An Equatable wrap would short-circuit body when
+/// only @State changed, so history navigation and macro-fills would
+/// stop propagating to CommandTextField's NSView.
+struct InputBar: View {
     let isActive: Bool
     let gameState: GameState
     /// Called for both user-submitted commands and macro-repeat
@@ -28,13 +33,6 @@ struct InputBar: View, Equatable {
     /// Ctrl/Option-Enter macros. Persisted in UserDefaults.
     @AppStorage("grimoire.macroThreshold") private var macroThreshold: Int = 3
 
-    nonisolated static func == (lhs: InputBar, rhs: InputBar) -> Bool {
-        lhs.isActive == rhs.isActive
-            && lhs.gameState == rhs.gameState
-        // `onSend` closure is excluded -- closures don't compare
-        // meaningfully across renders.
-    }
-
     var body: some View {
         let _ = Diagnostics.shared.recordPaneEval("InputBar")
         return HStack(spacing: 8) {
@@ -45,7 +43,7 @@ struct InputBar: View, Equatable {
             ZStack(alignment: .leading) {
                 // Bricks sit behind the input text, left-anchored, so an
                 // active roundtime is immediately visible at the cursor edge.
-                RoundtimeBricks(state: gameState).equatable()
+                RoundtimeBricks(state: gameState)
 
                 CommandTextField(
                     text: $text,

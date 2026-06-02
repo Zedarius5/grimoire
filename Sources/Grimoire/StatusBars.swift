@@ -138,21 +138,20 @@ struct VitalsBar: View {
 /// the container). Red bricks for hard RT, blue for spell/cast RT. When both
 /// are active, hard sits on top of cast (half-height each); otherwise the
 /// active one fills the input bar's height.
-/// Equatable so SwiftUI can skip the body call when the parent
-/// re-renders without a real change to GameState. The 10Hz timer
-/// inside still drives @State updates while RT is active, and @State
-/// changes invalidate the view independently of Equatable.
-struct RoundtimeBricks: View, Equatable {
+struct RoundtimeBricks: View {
     let state: GameState
-
-    nonisolated static func == (lhs: RoundtimeBricks, rhs: RoundtimeBricks) -> Bool {
-        lhs.state == rhs.state
-    }
 
     /// Bumped by the 10Hz timer purely as a re-render trigger; the
     /// actual countdown math reads `Date()` in `remainingSeconds`, so
     /// a stale `now` after an idle gap can't produce a wrong brick
     /// count when a fresh RT arrives.
+    ///
+    /// NOTE: do NOT make this view Equatable with a stored-property-only
+    /// `==`. SwiftUI's `.equatable()` wrapper compares the let-fields
+    /// only -- @State changes are invisible to the comparison, so an
+    /// Equatable-wrapped RoundtimeBricks would freeze its countdown
+    /// the instant `state` stopped changing (the 10Hz `now` ticks
+    /// would all short-circuit as "no change" against the let-fields).
     @State private var now: Date = Date()
     /// Whether the previous tick saw at least one active counter.
     /// Lets us fire one extra tick after active → inactive so the
