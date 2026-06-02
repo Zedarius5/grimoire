@@ -337,6 +337,7 @@ struct DialogPane: View {
                     onCommand: onCommand,
                     presetWindow: presetWindow
                 )
+                .equatable()
             }
         }
     }
@@ -381,7 +382,17 @@ private struct WidthModifier: ViewModifier {
     }
 }
 
-private struct DialogWidgetView: View {
+/// Equatable so SwiftUI can skip the body call when a parent re-render
+/// (e.g. ContentView reacting to an unrelated LichClient @Published
+/// change like a vital tick) creates a new copy of the view with
+/// identical data. Without this, every ContentView re-render walked
+/// through every DialogWidgetView body in the app -- visible in the
+/// pane-eval log as DialogWidget=188/376/etc. per heartbeat. The
+/// closure `onCommand` is intentionally excluded from the comparison;
+/// it's stable across renders in practice and treating it as
+/// always-equal is safe (we never bind a "different" onCommand to the
+/// same logical row).
+private struct DialogWidgetView: View, Equatable {
     let widget: DialogWidget
     let width: CGFloat?
     let timerConfig: TimerBarConfig
@@ -393,6 +404,25 @@ private struct DialogWidgetView: View {
     /// Which preset window (if any) backs this row's dialog. Nil for
     /// non-managed dialogs like UberBar — skips preset resolution.
     let presetWindow: DialogWindow?
+
+    nonisolated static func == (lhs: DialogWidgetView, rhs: DialogWidgetView) -> Bool {
+        guard lhs.widget == rhs.widget,
+              lhs.width == rhs.width,
+              lhs.timerConfig == rhs.timerConfig,
+              lhs.presetWindow == rhs.presetWindow
+        else { return false }
+        // `dialogLastUpdated` only matters for progress bars (their
+        // inner TimelineView reads it to compute the countdown's
+        // elapsed value). Labels / links / separators don't read it,
+        // so we DON'T compare it for them -- otherwise every dialog
+        // update (~1Hz under active gameplay) would fail equality for
+        // every static widget in that dialog, defeating the whole
+        // point of the Equatable skip.
+        if case .progressBar = lhs.widget {
+            return lhs.dialogLastUpdated == rhs.dialogLastUpdated
+        }
+        return true
+    }
 
     @Environment(\.fontSize) private var fontSize
     @EnvironmentObject private var spellPresets: SpellPresetStore
