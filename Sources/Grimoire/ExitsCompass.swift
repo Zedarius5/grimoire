@@ -4,9 +4,18 @@ import GrimoireKit
 /// Compact compass widget showing available exits as lit cells. Sized to fit
 /// the same row as the input bar — 3x3 cardinal grid with up/down/out
 /// collapsed into the centre column.
-struct ExitsCompass: View {
+///
+/// Equatable so SwiftUI can skip the body call when the parent
+/// re-renders with an unchanged exits set. The `onCommand` closure is
+/// intentionally excluded from the comparison; closures don't compare
+/// meaningfully across SwiftUI renders.
+struct ExitsCompass: View, Equatable {
     let exits: Set<String>
     let onCommand: (String) -> Void
+
+    nonisolated static func == (lhs: ExitsCompass, rhs: ExitsCompass) -> Bool {
+        lhs.exits == rhs.exits
+    }
 
     var body: some View {
         let _ = Diagnostics.shared.recordPaneEval("ExitsCompass")

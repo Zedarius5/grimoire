@@ -136,7 +136,15 @@ struct ContentView: View {
     private var bottomBar: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                InputBar(client: client, gameState: client.gameState)
+                InputBar(
+                    isActive: client.isActive,
+                    gameState: client.gameState,
+                    onSend: { cmd in
+                        client.echoLocal("> \(cmd)")
+                        client.send(cmd)
+                    }
+                )
+                .equatable()
                 VitalsBar(state: client.gameState)
             }
             .frame(maxWidth: .infinity)
@@ -147,6 +155,7 @@ struct ContentView: View {
                 client.echoLocal("> \(dir)")
                 client.send(dir)
             }
+            .equatable()
             .frame(maxHeight: .infinity)
         }
         .fixedSize(horizontal: false, vertical: true)

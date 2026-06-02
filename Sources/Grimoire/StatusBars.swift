@@ -138,8 +138,16 @@ struct VitalsBar: View {
 /// the container). Red bricks for hard RT, blue for spell/cast RT. When both
 /// are active, hard sits on top of cast (half-height each); otherwise the
 /// active one fills the input bar's height.
-struct RoundtimeBricks: View {
+/// Equatable so SwiftUI can skip the body call when the parent
+/// re-renders without a real change to GameState. The 10Hz timer
+/// inside still drives @State updates while RT is active, and @State
+/// changes invalidate the view independently of Equatable.
+struct RoundtimeBricks: View, Equatable {
     let state: GameState
+
+    nonisolated static func == (lhs: RoundtimeBricks, rhs: RoundtimeBricks) -> Bool {
+        lhs.state == rhs.state
+    }
 
     /// Bumped by the 10Hz timer purely as a re-render trigger; the
     /// actual countdown math reads `Date()` in `remainingSeconds`, so

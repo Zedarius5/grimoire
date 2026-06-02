@@ -1,9 +1,21 @@
 import SwiftUI
 import GrimoireKit
 
-struct InputBar: View {
-    @ObservedObject var client: LichClient
+/// Equatable so SwiftUI can skip the body call when the parent
+/// re-renders without a real change to `isActive` / `gameState`.
+/// Previously held `@ObservedObject var client: LichClient`, which
+/// subscribed the view to every LichClient publish (vitals, dialogs,
+/// lines, etc.) and forced the body to re-evaluate ~10-30x/sec
+/// regardless of Equatable. Now takes only the values it actually
+/// reads, plus an `onSend` closure for the side-effecting path.
+struct InputBar: View, Equatable {
+    let isActive: Bool
     let gameState: GameState
+    /// Called for both user-submitted commands and macro-repeat
+    /// requests. Caller (ContentView) bundles `client.echoLocal` +
+    /// `client.send` into this closure so we don't need to hold a
+    /// reference to LichClient and subscribe to every publish.
+    let onSend: (String) -> Void
 
     @Environment(\.fontSize) private var fontSize
 
@@ -16,7 +28,12 @@ struct InputBar: View {
     /// Ctrl/Option-Enter macros. Persisted in UserDefaults.
     @AppStorage("grimoire.macroThreshold") private var macroThreshold: Int = 3
 
-    private var isActive: Bool { client.isActive }
+    nonisolated static func == (lhs: InputBar, rhs: InputBar) -> Bool {
+        lhs.isActive == rhs.isActive
+            && lhs.gameState == rhs.gameState
+        // `onSend` closure is excluded -- closures don't compare
+        // meaningfully across renders.
+    }
 
     var body: some View {
         let _ = Diagnostics.shared.recordPaneEval("InputBar")
@@ -28,7 +45,7 @@ struct InputBar: View {
             ZStack(alignment: .leading) {
                 // Bricks sit behind the input text, left-anchored, so an
                 // active roundtime is immediately visible at the cursor edge.
-                RoundtimeBricks(state: gameState)
+                RoundtimeBricks(state: gameState).equatable()
 
                 CommandTextField(
                     text: $text,
@@ -64,7 +81,7 @@ struct InputBar: View {
         )
         .environment(\.colorScheme, .dark)
         .onAppear { focused = true }
-        .onChange(of: client.isActive) { _, nowActive in
+        .onChange(of: isActive) { _, nowActive in
             if nowActive { focused = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: .grimoireMacroRepeatLast)) { _ in
@@ -96,8 +113,7 @@ struct InputBar: View {
         historyIndex = nil
         guard !command.isEmpty, isActive else { return }
 
-        client.echoLocal("> \(command)")
-        client.send(command)
+        onSend(command)
 
         // Append to history; avoid back-to-back duplicates
         if history.last != command {
@@ -143,8 +159,6 @@ struct InputBar: View {
         let qualifying = history.reversed().filter { $0.count >= macroThreshold }
         let arr = Array(qualifying)
         guard arr.indices.contains(n) else { return }
-        let command = arr[n]
-        client.echoLocal("> \(command)")
-        client.send(command)
+        onSend(arr[n])
     }
 }
