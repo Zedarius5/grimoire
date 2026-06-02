@@ -136,16 +136,22 @@ struct DialogPane: View {
 
     var body: some View {
         let _ = Diagnostics.shared.recordPaneEval("DialogPane:\(dialog.id)")
-        // TimelineView re-renders the inner content every second, giving us a
-        // reliable 1Hz tick for the per-bar countdown without any @State
-        // gymnastics that fight SwiftUI's diffing.
-        return TimelineView(.periodic(from: .now, by: 1.0)) { context in
-            let elapsed = max(0, context.date.timeIntervalSince(dialog.lastUpdated))
-            renderedBody(elapsedSinceUpdate: elapsed)
-        }
+        // The 1Hz ticker that drives per-bar countdowns used to live HERE
+        // as a pane-level TimelineView wrapping the entire content. That
+        // meant every widget body in the pane (including labels and
+        // links that don't care about elapsed time) re-evaluated each
+        // second -- with ~92 widgets across all dialogs, the
+        // pane-evals counter was sitting at 92+ per second of pure
+        // overhead under no game activity.
+        //
+        // Now the ticker lives INSIDE the progress-bar branch of
+        // `DialogWidgetView` (the only widget kind that depends on
+        // elapsed time). Labels / links / separators are stable
+        // between data updates.
+        return renderedBody()
     }
 
-    private func renderedBody(elapsedSinceUpdate: TimeInterval) -> some View {
+    private func renderedBody() -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(dialog.title.uppercased())
@@ -163,9 +169,9 @@ struct DialogPane: View {
             ScrollView {
                 GeometryReader { geo in
                     if let wounds, !sideBySideRows.isEmpty {
-                        woundsLayout(wounds: wounds, geo: geo, elapsedSinceUpdate: elapsedSinceUpdate)
+                        woundsLayout(wounds: wounds, geo: geo)
                     } else {
-                        plainLayout(geo: geo, elapsedSinceUpdate: elapsedSinceUpdate)
+                        plainLayout(geo: geo)
                     }
                 }
                 .frame(minHeight: contentHeight)
@@ -250,7 +256,7 @@ struct DialogPane: View {
     }
 
     @ViewBuilder
-    private func woundsLayout(wounds: Wounds, geo: GeometryProxy, elapsedSinceUpdate: TimeInterval) -> some View {
+    private func woundsLayout(wounds: Wounds, geo: GeometryProxy) -> some View {
         // Compute the row partition once per layout pass — the old
         // path called `rows` three times (once from `sideBySideRows`,
         // twice from `remainingRows` via `sideBySideRows`+`rows`),
@@ -275,9 +281,7 @@ struct DialogPane: View {
                     .frame(width: Self.bodyDiagramWidth)
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(topRows.indices, id: \.self) { idx in
-                        rowView(topRows[idx],
-                                paneWidth: rightWidth,
-                                elapsedSinceUpdate: elapsedSinceUpdate)
+                        rowView(topRows[idx], paneWidth: rightWidth)
                     }
                 }
                 .frame(width: rightWidth, alignment: .leading)
@@ -286,9 +290,7 @@ struct DialogPane: View {
             if !rest.isEmpty {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(rest.indices, id: \.self) { idx in
-                        rowView(rest[idx],
-                                paneWidth: geo.size.width - 8,
-                                elapsedSinceUpdate: elapsedSinceUpdate)
+                        rowView(rest[idx], paneWidth: geo.size.width - 8)
                     }
                 }
             }
@@ -299,7 +301,7 @@ struct DialogPane: View {
     }
 
     @ViewBuilder
-    private func plainLayout(geo: GeometryProxy, elapsedSinceUpdate: TimeInterval) -> some View {
+    private func plainLayout(geo: GeometryProxy) -> some View {
         // Cache `rows` once per layout pass — otherwise both
         // `rows.indices` and the `rows[rowIdx]` subscript inside the
         // ForEach re-evaluate the computed property, each call running
@@ -307,9 +309,7 @@ struct DialogPane: View {
         let allRows = rows
         VStack(alignment: .leading, spacing: 1) {
             ForEach(allRows.indices, id: \.self) { rowIdx in
-                rowView(allRows[rowIdx],
-                        paneWidth: geo.size.width - 8,
-                        elapsedSinceUpdate: elapsedSinceUpdate)
+                rowView(allRows[rowIdx], paneWidth: geo.size.width - 8)
             }
         }
         .padding(.horizontal, 4)
@@ -320,8 +320,7 @@ struct DialogPane: View {
     @ViewBuilder
     private func rowView(
         _ widgets: [DialogWidget],
-        paneWidth: CGFloat,
-        elapsedSinceUpdate: TimeInterval
+        paneWidth: CGFloat
     ) -> some View {
         let widths = distributedWidths(for: widgets, paneWidth: paneWidth)
         // Map the Stormfront dialog id to one of the four known preset
@@ -334,7 +333,7 @@ struct DialogPane: View {
                     widget: widgets[idx],
                     width: widths[idx],
                     timerConfig: timerConfig,
-                    elapsedSinceUpdate: elapsedSinceUpdate,
+                    dialogLastUpdated: dialog.lastUpdated,
                     onCommand: onCommand,
                     presetWindow: presetWindow
                 )
@@ -386,7 +385,10 @@ private struct DialogWidgetView: View {
     let widget: DialogWidget
     let width: CGFloat?
     let timerConfig: TimerBarConfig
-    let elapsedSinceUpdate: TimeInterval
+    /// Used by the progress-bar branch's inner TimelineView to compute
+    /// "time elapsed since the server last sent this dialog's values"
+    /// for the live countdown. Other widget kinds don't read this.
+    let dialogLastUpdated: Date
     let onCommand: (String) -> Void
     /// Which preset window (if any) backs this row's dialog. Nil for
     /// non-managed dialogs like UberBar — skips preset resolution.
@@ -469,9 +471,15 @@ private struct DialogWidgetView: View {
             if resolved.hidden {
                 EmptyView()
             } else {
-                let remainingSeconds = liveRemainingSeconds(time)
-                let liveTime = remainingSeconds.map(formatDurationSeconds)
-                    ?? (time?.trimmingCharacters(in: .whitespacesAndNewlines))
+                // Local 1Hz TimelineView so ONLY the bar's time-dependent
+                // rendering re-runs each second. The rest of the dialog
+                // pane's widgets (labels / links / separators) stay
+                // frozen between data updates.
+                TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                    let elapsed = max(0, context.date.timeIntervalSince(dialogLastUpdated))
+                    let remainingSeconds = liveRemainingSeconds(time, elapsed: elapsed)
+                    let liveTime = remainingSeconds.map(formatDurationSeconds)
+                        ?? (time?.trimmingCharacters(in: .whitespacesAndNewlines))
 
                 // Effective window: a per-spell / group / default
                 // override (e.g. a single cooldown bar that should
@@ -540,6 +548,7 @@ private struct DialogWidgetView: View {
                 }
                 .modifier(WidthModifier(width: width, height: resolvedHeight))
                 .clipShape(RoundedRectangle(cornerRadius: 3))
+                }  // TimelineView
             }
 
         case .image:
@@ -585,11 +594,13 @@ private struct DialogWidgetView: View {
 
     /// Parses the time attribute and subtracts elapsed seconds since the
     /// dialog last updated. Returns `nil` for unparseable strings (typical
-    /// of non-timer bars like Health / Mana).
-    fileprivate func liveRemainingSeconds(_ original: String?) -> Int? {
+    /// of non-timer bars like Health / Mana). `elapsed` is provided by
+    /// the progress bar's local TimelineView so the countdown ticks at
+    /// 1Hz without re-rendering the rest of the dialog.
+    fileprivate func liveRemainingSeconds(_ original: String?, elapsed: TimeInterval) -> Int? {
         guard let original, !original.isEmpty else { return nil }
         guard let seconds = parseDurationSeconds(original) else { return nil }
-        return max(0, seconds - Int(elapsedSinceUpdate.rounded()))
+        return max(0, seconds - Int(elapsed.rounded()))
     }
 
     /// Parses durations the server sends on `<progressBar time="…">`.
