@@ -129,8 +129,15 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
     public var fgColor: String?
     public var bgColor: String?
     /// Trait additions that OR with each member rule's own toggles.
+    /// (entireLine, caseSensitive, wholeWord can't be "subtracted" by
+    /// a member rule -- the group is the floor, the rule can promote
+    /// but not demote. Matches the bold/italic semantics already in
+    /// place.)
     public var bold: Bool
     public var italic: Bool
+    public var entireLine: Bool
+    public var caseSensitive: Bool
+    public var wholeWord: Bool
     /// Master toggle. When false, every member rule is treated as
     /// disabled (the rule's own `enabled` flag is preserved on disk
     /// so flipping the group back on restores the prior state).
@@ -154,6 +161,9 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
         bgColor: String? = nil,
         bold: Bool = false,
         italic: Bool = false,
+        entireLine: Bool = false,
+        caseSensitive: Bool = false,
+        wholeWord: Bool = false,
         enabled: Bool = true,
         notify: Bool = false,
         stashedFgColor: String? = nil,
@@ -165,15 +175,21 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
         self.bgColor = bgColor
         self.bold = bold
         self.italic = italic
+        self.entireLine = entireLine
+        self.caseSensitive = caseSensitive
+        self.wholeWord = wholeWord
         self.enabled = enabled
         self.notify = notify
         self.stashedFgColor = stashedFgColor
         self.stashedBgColor = stashedBgColor
     }
 
-    // Backward-compat decode: stash fields decode as nil on older configs.
+    // Backward-compat decode: stash fields and the newer matching
+    // flags (entireLine/caseSensitive/wholeWord) decode as nil/false
+    // on older configs.
     private enum CodingKeys: String, CodingKey {
         case id, name, fgColor, bgColor, bold, italic, enabled, notify, stashedFgColor, stashedBgColor
+        case entireLine, caseSensitive, wholeWord
     }
 
     public init(from decoder: Decoder) throws {
@@ -188,6 +204,9 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
         self.notify  = try c.decode(Bool.self, forKey: .notify)
         self.stashedFgColor = try c.decodeIfPresent(String.self, forKey: .stashedFgColor)
         self.stashedBgColor = try c.decodeIfPresent(String.self, forKey: .stashedBgColor)
+        self.entireLine    = (try? c.decode(Bool.self, forKey: .entireLine))    ?? false
+        self.caseSensitive = (try? c.decode(Bool.self, forKey: .caseSensitive)) ?? false
+        self.wholeWord     = (try? c.decode(Bool.self, forKey: .wholeWord))     ?? false
     }
 }
 
@@ -205,8 +224,11 @@ public enum HighlightResolver {
             resolved.enabled = rule.enabled && group.enabled
             if resolved.fgColor == nil { resolved.fgColor = group.fgColor }
             if resolved.bgColor == nil { resolved.bgColor = group.bgColor }
-            resolved.bold   = resolved.bold   || group.bold
-            resolved.italic = resolved.italic || group.italic
+            resolved.bold          = resolved.bold          || group.bold
+            resolved.italic        = resolved.italic        || group.italic
+            resolved.entireLine    = resolved.entireLine    || group.entireLine
+            resolved.caseSensitive = resolved.caseSensitive || group.caseSensitive
+            resolved.wholeWord     = resolved.wholeWord     || group.wholeWord
             return resolved
         }
     }

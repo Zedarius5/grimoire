@@ -47,6 +47,28 @@ struct HighlightResolverTests {
         #expect(resolved.italic == true)
     }
 
+    @Test("entireLine / caseSensitive / wholeWord OR across rule and group")
+    func matchFlagsOrAcrossLayers() {
+        let group = HighlightGroup(
+            id: UUID(),
+            name: "g",
+            entireLine: true,
+            caseSensitive: false,
+            wholeWord: true
+        )
+        let rule = Highlight(
+            text: "x",
+            entireLine: false,
+            caseSensitive: true,
+            wholeWord: false,
+            groupId: group.id
+        )
+        let r = HighlightResolver.resolve([rule], groups: [group]).first!
+        #expect(r.entireLine    == true)   // group provides
+        #expect(r.caseSensitive == true)   // rule provides
+        #expect(r.wholeWord     == true)   // group provides
+    }
+
     @Test("Disabled group disables all members in effective view")
     func disabledGroupCascades() {
         let group = HighlightGroup(id: UUID(), name: "g", enabled: false)

@@ -59,11 +59,11 @@ struct HighlightEditorView: View {
             let group = rule.groupId.flatMap { groups[$0] }
             switch tag {
             case "regex":  return rule.usesPattern
-            case "line":   return rule.entireLine
-            case "case":   return rule.caseSensitive
-            case "word":   return rule.wholeWord
-            case "bold":   return rule.bold   || (group?.bold   ?? false)
-            case "italic": return rule.italic || (group?.italic ?? false)
+            case "line":   return rule.entireLine    || (group?.entireLine    ?? false)
+            case "case":   return rule.caseSensitive || (group?.caseSensitive ?? false)
+            case "word":   return rule.wholeWord     || (group?.wholeWord     ?? false)
+            case "bold":   return rule.bold          || (group?.bold          ?? false)
+            case "italic": return rule.italic        || (group?.italic        ?? false)
             default:       return false  // unknown tag matches nothing (strict)
             }
         }
@@ -553,12 +553,16 @@ private struct HighlightRow: View {
     private var metaBadges: some View {
         let r = resolved
         HStack(spacing: 4) {
-            if rule.usesPattern   { badge("REGEX") }
-            if rule.entireLine    { badge("LINE") }
-            if rule.caseSensitive { badge("CASE") }
-            if rule.wholeWord     { badge("WORD") }
-            if r.bold             { badge("bold") }
-            if r.italic           { badge("italic") }
+            // REGEX is rule-only (groups don't have it).
+            if rule.usesPattern { badge("REGEX") }
+            // The matching/display flags reflect group inheritance so
+            // a member of an "all lines" group shows LINE in the row,
+            // matching what'll actually fire at render time.
+            if r.entireLine    { badge("LINE") }
+            if r.caseSensitive { badge("CASE") }
+            if r.wholeWord     { badge("WORD") }
+            if r.bold          { badge("bold") }
+            if r.italic        { badge("italic") }
         }
     }
 
@@ -1013,6 +1017,9 @@ private struct HighlightGroupDetail: View {
     @State private var bgEnabled: Bool
     @State private var bold: Bool
     @State private var italic: Bool
+    @State private var entireLine: Bool
+    @State private var caseSensitive: Bool
+    @State private var wholeWord: Bool
     @State private var enabled: Bool
     @State private var notify: Bool
     @State private var didDelete: Bool = false
@@ -1033,8 +1040,11 @@ private struct HighlightGroupDetail: View {
         _bgColor   = State(initialValue: initialBgHex.flatMap { Color(hex: $0) } ?? .black)
         _fgEnabled = State(initialValue: group.fgColor != nil)
         _bgEnabled = State(initialValue: group.bgColor != nil)
-        _bold      = State(initialValue: group.bold)
-        _italic    = State(initialValue: group.italic)
+        _bold          = State(initialValue: group.bold)
+        _italic        = State(initialValue: group.italic)
+        _entireLine    = State(initialValue: group.entireLine)
+        _caseSensitive = State(initialValue: group.caseSensitive)
+        _wholeWord     = State(initialValue: group.wholeWord)
         _enabled   = State(initialValue: group.enabled)
         _notify    = State(initialValue: group.notify)
         _stashedFgHex = State(initialValue: group.stashedFgColor ?? group.fgColor)
@@ -1049,6 +1059,9 @@ private struct HighlightGroupDetail: View {
             bgColor: bgEnabled ? bgColor.hexString : nil,
             bold: bold,
             italic: italic,
+            entireLine: entireLine,
+            caseSensitive: caseSensitive,
+            wholeWord: wholeWord,
             enabled: enabled,
             notify: notify,
             stashedFgColor: stashedFgHex,
@@ -1089,12 +1102,23 @@ private struct HighlightGroupDetail: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Bold (adds to member rules)",   isOn: $bold)
-                Toggle("Italic (adds to member rules)", isOn: $italic)
-                Toggle("Notify on match",               isOn: $notify)
-                    .help("Posts a macOS notification with the matched game line when any rule in this group fires. (Hooked up in a separate commit.)")
+            HStack(alignment: .top, spacing: 24) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Highlight entire line", isOn: $entireLine)
+                    Toggle("Case sensitive",        isOn: $caseSensitive)
+                    Toggle("Whole word only",       isOn: $wholeWord)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Bold",   isOn: $bold)
+                    Toggle("Italic", isOn: $italic)
+                }
             }
+            Text("Members inherit these as defaults; a rule's own toggle adds to (but can't remove) what the group provides.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Toggle("Notify on match", isOn: $notify)
+                .help("Posts a macOS notification with the matched game line when any rule in this group fires. (Hooked up in a separate commit.)")
 
             Divider()
 
