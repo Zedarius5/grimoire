@@ -716,14 +716,14 @@ private struct HighlightDetail: View {
 
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Highlight entire line", isOn: $entireLine)
-                    Toggle("Case sensitive",        isOn: $caseSensitive)
-                    Toggle("Whole word only",       isOn: $wholeWord)
-                    Toggle("Regex pattern",         isOn: $usesPattern)
+                    inheritedToggle("Highlight entire line", isOn: $entireLine, inheritedKey: \.entireLine)
+                    inheritedToggle("Case sensitive",        isOn: $caseSensitive, inheritedKey: \.caseSensitive)
+                    inheritedToggle("Whole word only",       isOn: $wholeWord, inheritedKey: \.wholeWord)
+                    Toggle("Regex pattern", isOn: $usesPattern)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Bold",   isOn: $bold)
-                    Toggle("Italic", isOn: $italic)
+                    inheritedToggle("Bold",   isOn: $bold,   inheritedKey: \.bold)
+                    inheritedToggle("Italic", isOn: $italic, inheritedKey: \.italic)
                 }
             }
 
@@ -818,6 +818,36 @@ private struct HighlightDetail: View {
     private var patternIsValid: Bool {
         guard usesPattern, !text.isEmpty else { return true }
         return (try? NSRegularExpression(pattern: text)) != nil
+    }
+
+    /// Toggle that respects group inheritance: when the assigned
+    /// group provides the same flag, the toggle is disabled and
+    /// shown ON (so the user sees the effective state) with a
+    /// tooltip explaining where it comes from. The rule's own
+    /// underlying `@State` is preserved -- if the rule is later
+    /// moved out of the group, its original setting comes back.
+    private func inheritedToggle(
+        _ title: String,
+        isOn: Binding<Bool>,
+        inheritedKey: KeyPath<HighlightGroup, Bool>
+    ) -> some View {
+        let inherited = parentGroup?[keyPath: inheritedKey] ?? false
+        let display = Binding<Bool>(
+            get: { isOn.wrappedValue || inherited },
+            set: { newValue in
+                // Only writes through when NOT inherited -- when the
+                // group already provides this, the toggle is disabled
+                // and any set is a no-op anyway, but keep it
+                // defensive in case AppKit fires set() on a disabled
+                // control during some state transition.
+                if !inherited { isOn.wrappedValue = newValue }
+            }
+        )
+        return Toggle(title, isOn: display)
+            .disabled(inherited)
+            .help(inherited
+                  ? "Inherited from group \"\(parentGroup?.name ?? "")\". Move the rule out of the group to change."
+                  : "")
     }
 
     /// Stash-aware color row. Toggling OFF moves the current color
