@@ -39,9 +39,20 @@ struct ResizableStack<ItemID: Hashable>: View {
             let available = max(0, total - CGFloat(dividers) * dividerThickness)
             let resolved = resolveSizes(available: available)
 
+            // SwiftUI identity is keyed on the item id (not its array
+            // index). Indexing by position causes any reorder /
+            // insertion to look like "different content at this slot"
+            // and SwiftUI rebuilds the child view -- which, for a
+            // StoryTextView pane, destroys the underlying NSTextView
+            // and the next mount starts at scroll-y=0. Symptom: a side
+            // pane "popping to the top" when an unrelated pane
+            // appears or is dragged. Tagging by the actual item id
+            // lets SwiftUI move the existing view to its new slot
+            // instead of rebuilding.
+            let indexed = Array(zip(items.indices, items))
             stackContainer {
-                ForEach(items.indices, id: \.self) { idx in
-                    content(items[idx])
+                ForEach(indexed, id: \.1) { (idx, item) in
+                    content(item)
                         .frame(
                             width: axis == .horizontal ? resolved[idx] : nil,
                             height: axis == .vertical ? resolved[idx] : nil
