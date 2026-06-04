@@ -15,9 +15,24 @@ enum BuildInfo {
 
     private static func computeLabel() -> String {
         var parts: [String] = []
-        if let sha = gitShortSHA() { parts.append(sha) }
+        if let sha = embeddedGitSHA() ?? gitShortSHA() {
+            parts.append(sha)
+        }
         if let stamp = buildTimestamp() { parts.append(stamp) }
         return parts.isEmpty ? "build unknown" : parts.joined(separator: " · ")
+    }
+
+    /// Build-time SHA embedded in Info.plist by the `build-app.sh`
+    /// bundling script. Available in proper .app bundles; nil for
+    /// raw `swift build` runs from `.build/`. Preferred over the
+    /// .git walk-up because it survives the .app being moved out of
+    /// the build tree (e.g., copied to /Applications).
+    private static func embeddedGitSHA() -> String? {
+        guard let sha = Bundle.main.object(forInfoDictionaryKey: "GrimoireGitSHA") as? String,
+              !sha.isEmpty,
+              sha != "unknown"
+        else { return nil }
+        return sha
     }
 
     private static func buildTimestamp() -> String? {
