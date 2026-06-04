@@ -17,7 +17,7 @@ import GrimoireKit
 /// `requestAuthorization` will fail with "not bundled" and we'll log
 /// it instead of crashing. Run from a built `.app` for live behavior.
 @MainActor
-final class NotificationManager {
+final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     static let shared = NotificationManager()
 
@@ -32,7 +32,31 @@ final class NotificationManager {
     /// can apply the per-rule throttle without scanning history.
     private var lastFiredAt: [UUID: Date] = [:]
 
-    private init() {}
+    private override init() {
+        super.init()
+        // macOS suppresses banner-style display when the foreground
+        // app posts a notification to itself, UNLESS the delegate
+        // explicitly asks for banner + sound during the willPresent
+        // callback. Grimoire is almost always the foreground app
+        // while the user is playing, so without this hook the
+        // notification quietly lands in Notification Center but no
+        // banner appears on screen.
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// UN center calls this on a private queue when a notification is
+    /// about to be presented while the app is in the foreground. The
+    /// delegate's completion handler decides which UI affordances
+    /// macOS shows. Returning `[.banner, .sound]` gives the user the
+    /// same drop-down banner + sound they'd get if the app were
+    /// backgrounded.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
 
     /// Posts a notification for the given matched line. Idempotent
     /// w.r.t. permission requesting (first call requests; subsequent
