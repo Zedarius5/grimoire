@@ -1,22 +1,19 @@
 #!/bin/bash
-# Builds Grimoire.app from the SwiftPM-emitted executable + resource
-# bundle. The result is a proper macOS app bundle with an Info.plist,
-# bundle identifier, and code signature -- which is what
-# UNUserNotificationCenter (highlight notifications) needs to function.
+# One-shot: build Grimoire, bundle it into a proper .app, code-sign
+# (auto-detecting your Apple Development / Developer ID cert), install
+# to /Applications, and launch.
 #
-# Usage:
-#   ./scripts/build-app.sh                  # debug build, ad-hoc sign
-#   CONFIG=release ./scripts/build-app.sh   # release build, ad-hoc sign
+# Default behavior is "do everything"; flag-style env vars let you
+# opt out of pieces:
+#
+#   ./scripts/build-app.sh                       # debug, sign, install, launch
+#   CONFIG=release ./scripts/build-app.sh        # release, sign, install, launch
+#   INSTALL=0 LAUNCH=0 ./scripts/build-app.sh    # build + sign only, leave in build/
 #   CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAM_ID)" \
-#     ./scripts/build-app.sh                # sign with your dev cert
+#     ./scripts/build-app.sh                     # explicit cert override
 #
-# Output: build/Grimoire.app
-#
-# To run after building:
-#   open build/Grimoire.app
-#
-# To install (drag into /Applications):
-#   cp -R build/Grimoire.app /Applications/
+# Output (always): build/Grimoire.app
+# Output (when INSTALL=1): /Applications/Grimoire.app  (or ~/Applications)
 
 set -euo pipefail
 
@@ -28,27 +25,37 @@ BUNDLE_ID="${BUNDLE_ID:-com.zedarius.Grimoire}"
 APP_NAME="Grimoire"
 OUTPUT_DIR="build"
 APP_PATH="$OUTPUT_DIR/$APP_NAME.app"
-CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"   # `-` = ad-hoc
+INSTALL="${INSTALL:-1}"
+LAUNCH="${LAUNCH:-1}"
 
-# Version comes from git describe so it tracks releases automatically.
-# Falls back to "0.0.0+sha" if no tags exist yet.
+# Auto-detect a signing identity unless the caller pinned one. Prefers
+# real certs (Apple Development / Apple Distribution / Developer ID
+# Application) so Keychain ACLs + TCC permissions stay stable across
+# rebuilds. Falls back to ad-hoc if no real cert is found -- in that
+# case macOS will re-prompt for file/keychain access on every rebuild.
+if [ -z "${CODESIGN_IDENTITY:-}" ]; then
+    CODESIGN_IDENTITY="$(security find-identity -v -p codesigning \
+        | grep -E 'Apple Development|Apple Distribution|Developer ID Application' \
+        | head -1 \
+        | awk -F'"' '{print $2}' \
+        || true)"
+    if [ -z "$CODESIGN_IDENTITY" ]; then
+        CODESIGN_IDENTITY="-"
+    fi
+fi
+SIGN_LABEL="$CODESIGN_IDENTITY"
+[ "$CODESIGN_IDENTITY" = "-" ] && SIGN_LABEL="ad-hoc (no developer cert found)"
+
+# Build provenance: short SHA + commit count for CFBundleVersion.
 SHORT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
-if [ -n "$TAG" ]; then
-    SHORT_VERSION="${TAG#v}"
-else
-    SHORT_VERSION="0.0.0"
-fi
-# CFBundleVersion must be monotonically increasing for App Store but
-# for personal use any unique value works. Using the commit count.
+SHORT_VERSION="${TAG#v}"
+[ -z "$SHORT_VERSION" ] && SHORT_VERSION="0.0.0"
 BUNDLE_VERSION="$(git rev-list --count HEAD 2>/dev/null || echo "1")"
 
 echo "==> Building Grimoire ($CONFIG)"
 swift build -c "$CONFIG"
 
-# Find the built artifact dir. Swift puts it at
-# .build/<arch>-apple-macosx/<config>/, e.g.
-# .build/arm64-apple-macosx/debug/Grimoire.
 BUILD_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 BINARY="$BUILD_DIR/Grimoire"
 RESOURCE_BUNDLE="$BUILD_DIR/Grimoire_Grimoire.bundle"
@@ -63,15 +70,17 @@ rm -rf "$APP_PATH"
 mkdir -p "$APP_PATH/Contents/MacOS"
 mkdir -p "$APP_PATH/Contents/Resources"
 
-# Copy the binary.
 cp "$BINARY" "$APP_PATH/Contents/MacOS/$APP_NAME"
 
-# Copy the SwiftPM-generated resource bundle (game-icons, etc.) into
-# the standard Contents/Resources/ location -- Bundle.module checks
-# Bundle.main.resourceURL first, which resolves there. Also stamp a
-# minimal Info.plist into the SPM bundle so codesign --deep accepts
-# it (SPM emits a bare folder, no Info.plist, which trips codesign's
-# "bundle format unrecognized" check).
+# App icon (if present in repo Resources).
+if [ -f Resources/AppIcon.icns ]; then
+    cp Resources/AppIcon.icns "$APP_PATH/Contents/Resources/AppIcon.icns"
+fi
+
+# SwiftPM resource bundle -> Contents/Resources/ (where
+# Bundle.main.resourceURL -> Bundle.module resolves it). Stamp a
+# minimal Info.plist inside so codesign --deep accepts the .bundle
+# folder (SPM emits a bare directory without one).
 if [ -e "$RESOURCE_BUNDLE" ]; then
     DEST_BUNDLE="$APP_PATH/Contents/Resources/$(basename "$RESOURCE_BUNDLE")"
     cp -R "$RESOURCE_BUNDLE" "$DEST_BUNDLE"
@@ -93,13 +102,17 @@ if [ -e "$RESOURCE_BUNDLE" ]; then
 EOF
 fi
 
-# Generate Info.plist. Keys are the minimum set needed for a launchable
-# macOS app + notification authorization to succeed.
+# Top-level Info.plist. Generated fresh each build so version + SHA
+# always reflect the current commit. Schema: minimum keys for a
+# launchable Mac app + UNUserNotificationCenter authorization +
+# AppIcon + readable build provenance for the title bar.
 cat > "$APP_PATH/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
     <key>CFBundleIdentifier</key>
     <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>
@@ -108,6 +121,8 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
     <string>$APP_NAME</string>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -128,10 +143,8 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
     <false/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Danny Olefsky</string>
-    <!-- Build provenance, embedded so we can read it back at runtime
-         even when .git isn't reachable (i.e., the .app was moved out
-         of the build tree). BuildInfo.swift prefers the embedded
-         value over the .git walk-up. -->
+    <!-- Read by BuildInfo.swift to put the SHA in the window title
+         bar even after the .app is moved out of the build tree. -->
     <key>GrimoireGitSHA</key>
     <string>$SHORT_SHA</string>
     <key>GrimoireBuildConfig</key>
@@ -140,25 +153,47 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-# Code-sign. Ad-hoc by default; user can pass CODESIGN_IDENTITY for a
-# real cert. Notification authorization works under ad-hoc signing for
-# locally-launched apps.
-#
-# `--deep` recurses into the .app's contents, including the SPM
-# resource bundle (Grimoire_Grimoire.bundle), so we don't need an
-# explicit pre-sign of that. The SPM "bundle" is really just a
-# directory of resources (no inner Info.plist) so signing it as a
-# standalone bundle would fail anyway.
-echo "==> Code-signing (identity: $CODESIGN_IDENTITY)"
+echo "==> Code-signing ($SIGN_LABEL)"
 codesign --force --deep --sign "$CODESIGN_IDENTITY" \
+    --identifier "$BUNDLE_ID" \
     --options runtime \
     --timestamp=none \
-    "$APP_PATH"
+    "$APP_PATH" 2>&1 | grep -v "replacing existing signature" || true
 
-echo "==> Verifying signature"
+# Verify; fail loudly so we don't hand the user a broken bundle.
 codesign --verify --verbose "$APP_PATH" 2>&1 | sed 's/^/    /'
 
-echo ""
-echo "Done. $APP_PATH ($SHORT_VERSION, build $BUNDLE_VERSION, $SHORT_SHA)"
-echo "Run:     open $APP_PATH"
-echo "Install: cp -R $APP_PATH /Applications/"
+echo "==> $APP_PATH built ($SHORT_VERSION, build $BUNDLE_VERSION, $SHORT_SHA)"
+
+# --- Install + launch ---
+
+if [ "$INSTALL" = "1" ]; then
+    INSTALL_DIR="/Applications"
+    if [ ! -w "$INSTALL_DIR" ]; then
+        INSTALL_DIR="$HOME/Applications"
+        mkdir -p "$INSTALL_DIR"
+    fi
+    INSTALLED_APP="$INSTALL_DIR/$APP_NAME.app"
+
+    # Kill any running instance (built-tree or installed) so the
+    # rebuilt binary is what launches.
+    pkill -f "$APP_NAME.app/Contents/MacOS/$APP_NAME" 2>/dev/null || true
+    sleep 0.3
+
+    rm -rf "$INSTALLED_APP"
+    cp -R "$APP_PATH" "$INSTALLED_APP"
+    # Bump mtime so LaunchServices invalidates any cached icon.
+    touch "$INSTALLED_APP"
+    echo "==> Installed to $INSTALLED_APP"
+
+    if [ "$LAUNCH" = "1" ]; then
+        echo "==> Launching"
+        open "$INSTALLED_APP"
+    fi
+elif [ "$LAUNCH" = "1" ]; then
+    # Skipping install but still launching: run from build/.
+    pkill -f "$APP_NAME.app/Contents/MacOS/$APP_NAME" 2>/dev/null || true
+    sleep 0.3
+    echo "==> Launching $APP_PATH"
+    open "$APP_PATH"
+fi
