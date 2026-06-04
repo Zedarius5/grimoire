@@ -202,10 +202,21 @@ struct ContentView: View {
             client.onLinesAppended = { [highlights] lines, _streamId in
                 let rules = highlights.effectiveHighlights.filter { $0.enabled && $0.notify }
                 guard !rules.isEmpty else { return }
+                // Build a one-shot id -> name map so each per-line
+                // scan doesn't re-linear-scan the groups array.
+                let groupNames = Dictionary(
+                    uniqueKeysWithValues: highlights.groups.map { ($0.id, $0.name) }
+                )
                 for line in lines {
                     let text = line.plainText
-                    for rule in rules where HighlightProcessor.matches(rule, in: text) {
-                        NotificationManager.shared.notify(rule: rule, matchedLine: text)
+                    for rule in rules {
+                        guard let matched = HighlightProcessor.matchedText(rule, in: text) else { continue }
+                        let groupName = rule.groupId.flatMap { groupNames[$0] }
+                        NotificationManager.shared.notify(
+                            rule: rule,
+                            matchedText: matched,
+                            groupName: groupName
+                        )
                     }
                 }
             }

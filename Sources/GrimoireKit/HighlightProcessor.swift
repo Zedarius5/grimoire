@@ -244,6 +244,50 @@ public enum HighlightProcessor {
         wholeWord ? "\\b" + s + "\\b" : s
     }
 
+    /// Returns the exact substring of `text` that `rule` matched, or
+    /// nil if there's no match. The notification scanner uses this
+    /// for the body field so the user sees what ACTUALLY hit (not
+    /// the rule's match text, which for a regex is the pattern and
+    /// for a case-insensitive literal might differ in case from
+    /// what's on screen).
+    ///
+    /// Special case: `entireLine` rules return the whole `text`,
+    /// since those rules conceptually highlight the entire line, not
+    /// just the matching span.
+    public static func matchedText(_ rule: Highlight, in text: String) -> String? {
+        guard rule.enabled, !rule.text.isEmpty, !text.isEmpty else { return nil }
+        if rule.entireLine, matches(rule, in: text) {
+            return text
+        }
+        let plain = text as NSString
+        if rule.usesPattern {
+            guard let regex = compiledRegex(for: rule) else { return nil }
+            let range = NSRange(location: 0, length: plain.length)
+            guard let m = regex.firstMatch(in: text, range: range) else { return nil }
+            return plain.substring(with: m.range)
+        }
+        let opts: NSString.CompareOptions = rule.caseSensitive ? [] : [.caseInsensitive]
+        let count = plain.length
+        var search = NSRange(location: 0, length: count)
+        while search.location < count {
+            let m = plain.range(of: rule.text, options: opts, range: search)
+            if m.location == NSNotFound { return nil }
+            if rule.wholeWord {
+                let leftOK  = m.location == 0
+                    || !isWordChar(plain.character(at: m.location - 1))
+                let rightOK = m.location + m.length == count
+                    || !isWordChar(plain.character(at: m.location + m.length))
+                if !(leftOK && rightOK) {
+                    search.location = m.location + 1
+                    search.length = max(0, count - search.location)
+                    continue
+                }
+            }
+            return plain.substring(with: m)
+        }
+        return nil
+    }
+
     /// True iff `rule` matches anywhere in `text`. Same matching
     /// semantics as `apply(_:to:)` (regex if usesPattern, literal
     /// otherwise; honors caseSensitive + wholeWord). Used by the

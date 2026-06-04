@@ -41,24 +41,35 @@ final class NotificationManager {
     /// you. The default behavior handles both cases.
     private init() {}
 
-    /// Posts a notification for the given matched line. Idempotent
-    /// w.r.t. permission requesting (first call requests; subsequent
-    /// reuse the result). Per-rule throttling drops repeat fires for
-    /// the same rule within `perRuleThrottle` seconds. Returns
-    /// immediately; the actual UN center work is async.
-    func notify(rule: Highlight, matchedLine: String) {
+    /// Posts a notification for a highlight match.
+    /// - Parameters:
+    ///   - rule: the rule that fired (used as the throttle key).
+    ///   - matchedText: the actual substring of the game line that
+    ///     was highlighted -- for a regex rule this is the matched
+    ///     span, for a `entireLine` rule the whole line, etc. Shown
+    ///     as the notification body so the user sees what hit, not
+    ///     the rule's match pattern.
+    ///   - groupName: optional name of the rule's group; nil when
+    ///     the rule isn't grouped. Shown as the subtitle (with a
+    ///     "No highlight group" fallback so the slot isn't blank).
+    ///
+    /// Per-rule throttling drops repeat fires within
+    /// `perRuleThrottle` seconds. Returns immediately; the UN
+    /// center work is async.
+    func notify(rule: Highlight, matchedText: String, groupName: String?) {
         if let last = lastFiredAt[rule.id],
            Date().timeIntervalSince(last) < Self.perRuleThrottle {
             return
         }
         lastFiredAt[rule.id] = Date()
 
-        let ruleSnapshot = rule
-        let lineSnapshot = matchedLine
+        let ruleId = rule.id
+        let matched = matchedText
+        let group = groupName
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard await self.ensureAuthorized() else { return }
-            await self.deliver(rule: ruleSnapshot, matchedLine: lineSnapshot)
+            await self.deliver(ruleId: ruleId, matchedText: matched, groupName: group)
         }
     }
 
@@ -83,14 +94,19 @@ final class NotificationManager {
         }
     }
 
-    private func deliver(rule: Highlight, matchedLine: String) async {
+    private func deliver(ruleId: UUID, matchedText: String, groupName: String?) async {
         let content = UNMutableNotificationContent()
-        // Use the rule's match text (or a brief excerpt) as the subtitle
-        // so the notification center stack stays readable when several
-        // rules fire near in time. The actual matched line is the body.
-        content.title = "Grimoire"
-        content.subtitle = rule.text.isEmpty ? "Highlight match" : rule.text
-        content.body = matchedLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Fixed title -- the system already shows "Grimoire" next to
+        // the icon, so this slot describes the event itself.
+        content.title = "Highlighted text found"
+        // Group name in the subtitle gives the user immediate context
+        // for which bucket of rules fired. Explicit fallback string
+        // for ungrouped rules so the slot isn't blank.
+        content.subtitle = (groupName?.isEmpty == false) ? groupName! : "No highlight group"
+        // Body is the actual highlighted span (for regex matches that's
+        // the substring that hit; for entireLine rules it's the whole
+        // line). Trimmed for tidy display.
+        content.body = matchedText.trimmingCharacters(in: .whitespacesAndNewlines)
         content.sound = .default
 
         let request = UNNotificationRequest(
@@ -102,7 +118,7 @@ final class NotificationManager {
             try await UNUserNotificationCenter.current().add(request)
         } catch {
             appLog("NotificationManager",
-                   "Failed to deliver: \(error.localizedDescription)",
+                   "Failed to deliver (rule \(ruleId)): \(error.localizedDescription)",
                    level: .info)
         }
     }

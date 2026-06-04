@@ -133,6 +133,57 @@ struct HighlightProcessorPatternTests {
         #expect(!HighlightProcessor.matches(rule, in: "category of items"))
     }
 
+    @Test("matchedText() literal: returns the substring as-it-appeared in the line")
+    func matchedTextLiteralPreservesCase() {
+        // Case-insensitive literal: rule.text is lowercase but the
+        // line's hit is mixed case. We want the line's casing in the
+        // notification body, not the rule's.
+        let rule = Highlight(text: "death")
+        let result = HighlightProcessor.matchedText(rule, in: "The Death of a Salesman")
+        #expect(result == "Death")
+    }
+
+    @Test("matchedText() regex: returns the matched span (not the pattern)")
+    func matchedTextRegexReturnsSpan() {
+        let rule = Highlight(text: #"\d+ silver"#, usesPattern: true)
+        let result = HighlightProcessor.matchedText(rule, in: "You get 250 silver from the pile.")
+        #expect(result == "250 silver")
+    }
+
+    @Test("matchedText() entireLine: returns the whole line")
+    func matchedTextEntireLineReturnsFullLine() {
+        var rule = Highlight(text: "death")
+        rule.entireLine = true
+        let line = "Your foe collapses to the ground in death."
+        let result = HighlightProcessor.matchedText(rule, in: line)
+        #expect(result == line)
+    }
+
+    @Test("matchedText() wholeWord: skips partial-word hits and finds the real one")
+    func matchedTextWholeWordSkipsPartial() {
+        var rule = Highlight(text: "cat")
+        rule.wholeWord = true
+        // First "cat" is inside "category" -- should be rejected. Second
+        // "cat" is whole-word -- should be returned.
+        let result = HighlightProcessor.matchedText(rule, in: "category contains a cat in it")
+        #expect(result == "cat")
+    }
+
+    @Test("matchedText() returns nil when no match")
+    func matchedTextNoMatch() {
+        let rule = Highlight(text: "dragon")
+        #expect(HighlightProcessor.matchedText(rule, in: "you see a small kitten") == nil)
+    }
+
+    @Test("matchedText() returns nil for disabled / empty rule")
+    func matchedTextDisabledOrEmpty() {
+        var disabled = Highlight(text: "x")
+        disabled.enabled = false
+        #expect(HighlightProcessor.matchedText(disabled, in: "xyz") == nil)
+        let empty = Highlight(text: "")
+        #expect(HighlightProcessor.matchedText(empty, in: "anything") == nil)
+    }
+
     @Test("matches() returns false for disabled or empty-text rules")
     func matchesDisabledOrEmpty() {
         var disabled = Highlight(text: "x")
