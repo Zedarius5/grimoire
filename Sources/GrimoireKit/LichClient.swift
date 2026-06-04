@@ -67,6 +67,13 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
     /// want to retain across view rebuilds.
     public var onLaunchURL: ((URL) -> Void)?
 
+    /// Fires once per `applyBatch` with all lines that were appended in
+    /// that batch, per stream. The app layer wires this to the
+    /// notification scanner so highlight rules with `notify: true` can
+    /// trigger a macOS notification on match. Closure rather than
+    /// @Published because line events are one-shot signals, not state.
+    public var onLinesAppended: (([RenderedLine], _ streamId: String) -> Void)?
+
     /// Owned by `workQueue`.
     private var connection: NWConnection?
     private var renderer = StreamRenderer()
@@ -538,16 +545,21 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         var newRevisions = streamRevisions
         var mainGrew = false
         var otherGrew = false
+        /// Per-stream slice of "lines actually appended in this batch"
+        /// (after the prompt-collapse). Handed to `onLinesAppended`
+        /// after the @Published mutations so a consumer can react to
+        /// new content without re-implementing line tracking.
+        var appendedByStream: [(streamId: String, lines: [RenderedLine])] = []
         for streamId in orderedStreams {
             guard let incoming = batches[streamId] else { continue }
             var current = newDict[streamId] ?? []
-            var appended = 0
+            var freshlyAppended: [RenderedLine] = []
             for line in incoming {
                 if let last = current.last, Self.isPromptOnly(line), Self.isPromptOnly(last) {
                     continue
                 }
                 current.append(line)
-                appended += 1
+                freshlyAppended.append(line)
             }
             // Main needs deep scrollback so the user can review history; side
             // streams (thoughts, familiar, etc.) are short-form and trigger
@@ -561,14 +573,23 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
             // Bump revision by the number of appends *before* cap trimming.
             // This stays monotonic and lets views detect new content even
             // when `current.count` is pinned at the cap.
-            if appended > 0 {
-                newRevisions[streamId, default: 0] += appended
+            if !freshlyAppended.isEmpty {
+                newRevisions[streamId, default: 0] += freshlyAppended.count
                 if streamId == "main" { mainGrew = true }
                 else                   { otherGrew = true }
+                appendedByStream.append((streamId, freshlyAppended))
             }
         }
         linesByStream = newDict
         streamRevisions = newRevisions
+        // Fire the notification-scanner hook AFTER @Published mutations
+        // so SwiftUI views see consistent state. Skipping any work when
+        // no consumer is attached.
+        if let hook = onLinesAppended {
+            for (streamId, lines) in appendedByStream {
+                hook(lines, streamId)
+            }
+        }
 
         // Watchdog timestamps.
         let now = Date()

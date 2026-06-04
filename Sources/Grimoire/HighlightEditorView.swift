@@ -639,6 +639,7 @@ private struct HighlightDetail: View {
     @State private var bold: Bool
     @State private var italic: Bool
     @State private var groupId: UUID?
+    @State private var notify: Bool
     /// Stash for the user's last-chosen fg / bg colors. Persisted on
     /// the Highlight as `stashedFgColor` / `stashedBgColor` so toggling
     /// "Text color" off doesn't destroy the user's previous pick.
@@ -677,6 +678,7 @@ private struct HighlightDetail: View {
         _bold          = State(initialValue: rule.bold)
         _italic        = State(initialValue: rule.italic)
         _groupId       = State(initialValue: rule.groupId)
+        _notify        = State(initialValue: rule.notify)
         _stashedFgHex  = State(initialValue: rule.stashedFgColor ?? rule.fgColor)
         _stashedBgHex  = State(initialValue: rule.stashedBgColor ?? rule.bgColor)
     }
@@ -699,7 +701,8 @@ private struct HighlightDetail: View {
             italic: italic,
             groupId: groupId,
             stashedFgColor: stashedFgHex,
-            stashedBgColor: stashedBgHex
+            stashedBgColor: stashedBgHex,
+            notify: notify
         )
     }
 
@@ -768,6 +771,8 @@ private struct HighlightDetail: View {
                 VStack(alignment: .leading, spacing: 4) {
                     inheritedToggle("Bold",   isOn: $bold,   inheritedKey: \.bold)
                     inheritedToggle("Italic", isOn: $italic, inheritedKey: \.italic)
+                    inheritedToggle("Notify on match", isOn: $notify, inheritedKey: \.notify)
+                        .help("Posts a macOS notification with the matched game line when this rule fires. Per-rule throttle prevents flooding.")
                 }
             }
 

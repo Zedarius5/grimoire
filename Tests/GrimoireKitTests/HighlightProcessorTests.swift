@@ -101,6 +101,48 @@ struct HighlightProcessorPatternTests {
         #expect(hit?.style.italic == true)
     }
 
+    @Test("matches() literal: substring hit returns true")
+    func matchesLiteralHit() {
+        let rule = Highlight(text: "death")
+        #expect(HighlightProcessor.matches(rule, in: "the monster dies a horrible death"))
+    }
+
+    @Test("matches() literal: no hit returns false")
+    func matchesLiteralMiss() {
+        let rule = Highlight(text: "death")
+        #expect(!HighlightProcessor.matches(rule, in: "you skip merrily through the meadow"))
+    }
+
+    @Test("matches() regex: hit returns true")
+    func matchesRegexHit() {
+        let rule = Highlight(text: #"\d+ silver"#, usesPattern: true)
+        #expect(HighlightProcessor.matches(rule, in: "you find 250 silver in the pile"))
+    }
+
+    @Test("matches() respects case sensitivity")
+    func matchesCaseSensitive() {
+        let rule = Highlight(text: "Death", caseSensitive: true)
+        #expect(!HighlightProcessor.matches(rule, in: "facing death"))
+        #expect(HighlightProcessor.matches(rule, in: "facing Death"))
+    }
+
+    @Test("matches() respects wholeWord")
+    func matchesWholeWord() {
+        let rule = Highlight(text: "cat", wholeWord: true)
+        #expect(HighlightProcessor.matches(rule, in: "the cat sleeps"))
+        #expect(!HighlightProcessor.matches(rule, in: "category of items"))
+    }
+
+    @Test("matches() returns false for disabled or empty-text rules")
+    func matchesDisabledOrEmpty() {
+        var disabled = Highlight(text: "x")
+        disabled.enabled = false
+        #expect(!HighlightProcessor.matches(disabled, in: "xyz"))
+
+        let empty = Highlight(text: "")
+        #expect(!HighlightProcessor.matches(empty, in: "anything"))
+    }
+
     @Test("Invalid regex fails closed (no match, no crash)")
     func invalidRegexFailsClosed() {
         // `[` opens a character class that never closes -- ICU returns

@@ -244,6 +244,41 @@ public enum HighlightProcessor {
         wholeWord ? "\\b" + s + "\\b" : s
     }
 
+    /// True iff `rule` matches anywhere in `text`. Same matching
+    /// semantics as `apply(_:to:)` (regex if usesPattern, literal
+    /// otherwise; honors caseSensitive + wholeWord). Used by the
+    /// notification scanner to check "did any notify-enabled rule
+    /// match this line?" without paying for the full per-character
+    /// styling rebuild that `apply` does.
+    public static func matches(_ rule: Highlight, in text: String) -> Bool {
+        guard rule.enabled, !rule.text.isEmpty, !text.isEmpty else { return false }
+        if rule.usesPattern {
+            guard let regex = compiledRegex(for: rule) else { return false }
+            let range = NSRange(location: 0, length: (text as NSString).length)
+            return regex.firstMatch(in: text, range: range) != nil
+        }
+        let plain = text as NSString
+        let opts: NSString.CompareOptions = rule.caseSensitive ? [] : [.caseInsensitive]
+        if !rule.wholeWord {
+            return plain.range(of: rule.text, options: opts).location != NSNotFound
+        }
+        // wholeWord: scan and verify boundaries on each candidate.
+        let count = plain.length
+        var search = NSRange(location: 0, length: count)
+        while search.location < count {
+            let m = plain.range(of: rule.text, options: opts, range: search)
+            if m.location == NSNotFound { return false }
+            let leftOK  = m.location == 0
+                || !isWordChar(plain.character(at: m.location - 1))
+            let rightOK = m.location + m.length == count
+                || !isWordChar(plain.character(at: m.location + m.length))
+            if leftOK && rightOK { return true }
+            search.location = m.location + 1
+            search.length = max(0, count - search.location)
+        }
+        return false
+    }
+
     private static func isWordChar(_ ch: unichar) -> Bool {
         // ASCII fast-path: letters, digits, and underscore.
         if ch >= 0x30 && ch <= 0x39 { return true }   // 0-9

@@ -191,6 +191,24 @@ struct ContentView: View {
             client.onLaunchURL = { url in
                 _ = NSWorkspace.shared.open(url)
             }
+            // Notification dispatch: scan every newly-appended line
+            // against the user's `notify`-flagged highlight rules and
+            // post a macOS notification for each match. Uses the
+            // resolved (group-merged) rule set so a member of a
+            // notify-on-match group fires the same as if its own
+            // `notify` were on. Lives here (vs. inside LichClient)
+            // because the rule set is a Grimoire concern, not a
+            // protocol concern.
+            client.onLinesAppended = { [highlights] lines, _streamId in
+                let rules = highlights.effectiveHighlights.filter { $0.enabled && $0.notify }
+                guard !rules.isEmpty else { return }
+                for line in lines {
+                    let text = line.plainText
+                    for rule in rules where HighlightProcessor.matches(rule, in: text) {
+                        NotificationManager.shared.notify(rule: rule, matchedLine: text)
+                    }
+                }
+            }
             // Seed the stream-fallthrough list on launch so panes that
             // were hidden + flagged in the persisted config take effect
             // immediately, without waiting for the next `panes` mutation.

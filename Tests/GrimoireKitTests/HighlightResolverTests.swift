@@ -85,4 +85,22 @@ struct HighlightResolverTests {
         let result = HighlightResolver.resolve([rule], groups: [])
         #expect(result == [rule])
     }
+
+    @Test("notify ORs across rule and group")
+    func notifyOrsAcrossLayers() {
+        let g1 = HighlightGroup(id: UUID(), name: "notify-group", notify: true)
+        let g2 = HighlightGroup(id: UUID(), name: "quiet-group", notify: false)
+        // Rule with notify=false in a notify-on group: effective notify true.
+        let r1 = Highlight(text: "a", notify: false)
+        let r1WithGroup = { var r = r1; r.groupId = g1.id; return r }()
+        // Rule with notify=true in a quiet group: effective notify true.
+        let r2 = Highlight(text: "b", notify: true)
+        let r2WithGroup = { var r = r2; r.groupId = g2.id; return r }()
+        // Rule with notify=false, no group: effective notify false.
+        let r3 = Highlight(text: "c", notify: false)
+        let resolved = HighlightResolver.resolve([r1WithGroup, r2WithGroup, r3], groups: [g1, g2])
+        #expect(resolved[0].notify == true)
+        #expect(resolved[1].notify == true)
+        #expect(resolved[2].notify == false)
+    }
 }

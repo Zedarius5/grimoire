@@ -48,6 +48,11 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// these -- they're editor-only persistence.
     public var stashedFgColor: String?
     public var stashedBgColor: String?
+    /// When true (or when the rule's group has notify on), a match
+    /// against this rule posts a macOS notification containing the
+    /// matched line. Throttled per-rule so a chatty match doesn't
+    /// flood the notification center.
+    public var notify: Bool
 
     public init(
         id: UUID = UUID(),
@@ -64,7 +69,8 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         italic: Bool = false,
         groupId: UUID? = nil,
         stashedFgColor: String? = nil,
-        stashedBgColor: String? = nil
+        stashedBgColor: String? = nil,
+        notify: Bool = false
     ) {
         self.id = id
         self.text = text
@@ -81,16 +87,17 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.groupId = groupId
         self.stashedFgColor = stashedFgColor
         self.stashedBgColor = stashedBgColor
+        self.notify = notify
     }
 
     // Custom decoding so configs saved before any of these later fields
     // existed still load -- anything missing gets a backward-compatible
     // default (text kind, literal matching, no font traits, no group,
-    // no stash). Older saved-but-now-removed `underline` /
+    // no stash, no notify). Older saved-but-now-removed `underline` /
     // `strikethrough` keys are just ignored on decode; no migration.
     private enum CodingKeys: String, CodingKey {
         case id, text, fgColor, bgColor, entireLine, caseSensitive, wholeWord, enabled, kind, usesPattern
-        case bold, italic, groupId, stashedFgColor, stashedBgColor
+        case bold, italic, groupId, stashedFgColor, stashedBgColor, notify
     }
 
     public init(from decoder: Decoder) throws {
@@ -110,6 +117,7 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.groupId       = try c.decodeIfPresent(UUID.self, forKey: .groupId)
         self.stashedFgColor = try c.decodeIfPresent(String.self, forKey: .stashedFgColor)
         self.stashedBgColor = try c.decodeIfPresent(String.self, forKey: .stashedBgColor)
+        self.notify        = (try? c.decode(Bool.self, forKey: .notify)) ?? false
     }
 }
 
@@ -229,6 +237,7 @@ public enum HighlightResolver {
             resolved.entireLine    = resolved.entireLine    || group.entireLine
             resolved.caseSensitive = resolved.caseSensitive || group.caseSensitive
             resolved.wholeWord     = resolved.wholeWord     || group.wholeWord
+            resolved.notify        = resolved.notify        || group.notify
             return resolved
         }
     }
