@@ -170,6 +170,12 @@ final class CommandNSTextField: NSTextField {
 
     private var focusObservers: [NSObjectProtocol] = []
     private var clickMonitor: Any?
+    /// The read-only pane (story feed / stream pane) we most recently
+    /// stole first-responder status from. Its text selection survives
+    /// the steal (drawn inactive-gray), but Cmd+C routes to *us* — so
+    /// `performKeyEquivalent` consults this view to copy the selection
+    /// the user actually made. Weak: panes get remounted by SwiftUI.
+    private weak var lastSelectionSource: NSTextView?
 
     // No deinit cleanup — NSNotificationCenter holds observer tokens for
     // the lifetime of this object, and AppKit views aren't normally torn
@@ -187,7 +193,40 @@ final class CommandNSTextField: NSTextField {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if callbacks?.handleSpecialKey(event) == true { return true }
+        if isCopyKeyEquivalent(event), copyPaneSelection() { return true }
         return super.performKeyEquivalent(with: event)
+    }
+
+    private func isCopyKeyEquivalent(_ event: NSEvent) -> Bool {
+        let mods = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting(.capsLock)  // caps lock shouldn't break Cmd+C
+        return mods == .command
+            && event.charactersIgnoringModifiers?.lowercased() == "c"
+    }
+
+    /// Cmd+C fallthrough for the sticky-focus world: the input field
+    /// holds first-responder status ~always, so a selection the user
+    /// dragged out in a read-only pane can never receive the Copy
+    /// action through the responder chain (Edit > Copy validates
+    /// against our empty field editor and disables itself). When the
+    /// input has no selection of its own, copy the pane selection we
+    /// stole focus from instead. Returns false (deferring to normal
+    /// handling) whenever the input — or any other field — has a real
+    /// selection or focus of its own.
+    private func copyPaneSelection() -> Bool {
+        guard let win = window,
+              let editor = currentEditor(),
+              win.firstResponder === editor,        // input is focused...
+              editor.selectedRange.length == 0,     // ...with nothing selected
+              let pane = lastSelectionSource,
+              pane.window === win,
+              pane.selectedRange().length > 0
+        else { return false }
+        // NSTextView.copy(_:) writes the selected range to the general
+        // pasteboard directly — no first-responder status required.
+        pane.copy(nil)
+        return true
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -275,6 +314,7 @@ final class CommandNSTextField: NSTextField {
                 DispatchQueue.main.async {
                     guard let win = self.window, win.isKeyWindow else { return }
                     if win.firstResponder !== self.currentEditor() {
+                        self.stashPaneSelectionSource(win)
                         win.makeFirstResponder(self)
                     }
                 }
@@ -287,7 +327,21 @@ final class CommandNSTextField: NSTextField {
     private func reclaimFocus() {
         guard let win = window, win.isKeyWindow else { return }
         if win.firstResponder !== currentEditor() {
+            stashPaneSelectionSource(win)
             win.makeFirstResponder(self)
+        }
+    }
+
+    /// If the responder we're about to steal focus from is a read-only
+    /// pane text view, remember it — its selection stays alive after
+    /// the steal and `copyPaneSelection()` needs to find it on Cmd+C.
+    /// Clicking a *different* pane afterwards re-stashes (or, with no
+    /// selection, makes the next Cmd+C a no-op fallthrough), which
+    /// matches the "focus follows last click" intuition.
+    private func stashPaneSelectionSource(_ win: NSWindow) {
+        if let tv = win.firstResponder as? NSTextView,
+           !tv.isFieldEditor, !tv.isEditable {
+            lastSelectionSource = tv
         }
     }
 
@@ -307,6 +361,7 @@ final class CommandNSTextField: NSTextField {
             return
         }
         if win.firstResponder !== currentEditor() {
+            stashPaneSelectionSource(win)
             win.makeFirstResponder(self)
         }
     }

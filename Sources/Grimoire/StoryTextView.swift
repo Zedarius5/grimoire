@@ -44,7 +44,7 @@ struct StoryTextView: NSViewRepresentable {
         // wedges the main thread for tens of seconds once the feed has a
         // few thousand lines. TextKit 1's flat layout-fragment cache makes
         // those queries O(log n) and stays responsive under bursty appends.
-        let textView = NSTextView(usingTextLayoutManager: false)
+        let textView = PaneTextView(usingTextLayoutManager: false)
         // Swap in a layout manager that trims trailing whitespace from
         // highlight background fills, so a match like "fat palm rat"
         // that wraps after "fat" doesn't paint a box past the last
@@ -650,6 +650,25 @@ struct StoryTextView: NSViewRepresentable {
             onLinkClick?(url)
             return true
         }
+    }
+}
+
+/// Read-only pane text view (story feed, stream panes, the highlight
+/// editor's test pane). One job: keep right-click > Copy working under
+/// sticky input focus. The standard NSTextView context-menu items are
+/// nil-targeted, which routes them through the window's first
+/// responder — and `CommandNSTextField`'s focus reclaim means that's
+/// the command input's empty field editor, so Copy validated itself
+/// disabled even with a visible selection in the pane. Retargeting
+/// the Copy item at this view makes both validation (enabled iff this
+/// pane has a selection) and the action use the right view.
+final class PaneTextView: NSTextView {
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let menu = super.menu(for: event) else { return nil }
+        for item in menu.items where item.action == #selector(NSText.copy(_:)) {
+            item.target = self
+        }
+        return menu
     }
 }
 
