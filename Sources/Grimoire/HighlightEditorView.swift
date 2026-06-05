@@ -38,9 +38,10 @@ struct HighlightEditorView: View {
     ///
     /// Filter syntax:
     /// - Plain text: case-insensitive substring against the match text.
-    /// - `tag:regex|line|case|word|bold|italic`: flag filter. Bold and
-    ///   italic honor group inheritance so a rule that gets bold from
-    ///   its parent group still matches `tag:bold`.
+    /// - `tag:regex|line|case|word|bold|italic|fg|bg|enabled|disabled|`
+    ///   `grouped|ungrouped|notify`: flag filter against the rule's own
+    ///   setting -- except `notify`, which honors group inheritance
+    ///   (see `ruleMatches` for the rationale).
     /// - Multiple space-separated terms AND together, so
     ///   `tag:regex death` finds regex rules whose text contains
     ///   "death".
@@ -62,14 +63,19 @@ struct HighlightEditorView: View {
         let lower = term.lowercased()
         if lower.hasPrefix("tag:") {
             let tag = String(lower.dropFirst(4))
-            // All tags now check the rule's OWN field. Inherited
-            // values are intentionally NOT included, because the
-            // primary use case for these tags is finding explicit
-            // overrides ("which rules in this group have their own
-            // text color set when they should be inheriting?").
-            // For "is this rule effectively bold/italic/etc?" the
-            // visual badges in the sidebar (which DO show resolved
-            // state) are the better signal.
+            // Tags check the rule's OWN field. Inherited values are
+            // intentionally NOT included, because the primary use case
+            // for these tags is finding explicit overrides ("which
+            // rules in this group have their own text color set when
+            // they should be inheriting?"). For "is this rule
+            // effectively bold/italic/etc?" the visual badges in the
+            // sidebar (which DO show resolved state) are the better
+            // signal.
+            //
+            // Exception: `notify` answers "which highlights WILL fire
+            // a notification?" -- that's an effective-behavior
+            // question, so it honors group inheritance (a rule in a
+            // notifying group fires even with its own flag off).
             switch tag {
             case "regex":     return rule.usesPattern
             case "line":      return rule.entireLine
@@ -83,6 +89,9 @@ struct HighlightEditorView: View {
             case "disabled":  return !rule.enabled
             case "grouped":   return rule.groupId != nil
             case "ungrouped": return rule.groupId == nil
+            case "notify":
+                return rule.notify
+                    || (rule.groupId.flatMap { groups[$0] }?.notify ?? false)
             default:          return false  // unknown tag matches nothing (strict)
             }
         }
@@ -238,9 +247,11 @@ struct HighlightEditorView: View {
                 to filter by a rule's own setting (NOT inherited values). \
                 Tags: regex, line, case, word, bold, italic, fg (text color \
                 set), bg (bg color set), enabled, disabled, grouped, \
-                ungrouped. Multiple terms AND together — e.g. tag:fg \
+                ungrouped, notify. Multiple terms AND together — e.g. tag:fg \
                 tag:grouped finds rules in a group that have their own \
-                text color override.
+                text color override. tag:notify is the exception to the \
+                own-setting rule: it matches every rule that will fire a \
+                notification, including ones inheriting it from their group.
                 """)
             if !filterText.isEmpty {
                 Button {
@@ -603,6 +614,7 @@ private struct HighlightRow: View {
             if r.wholeWord     { badge("WORD") }
             if r.bold          { badge("bold") }
             if r.italic        { badge("italic") }
+            if r.notify        { badge("NOTIFY") }
         }
     }
 
