@@ -133,8 +133,12 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
     <string>6.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
+    <!-- Deliberately NOT public.app-category.games: that category is
+         what enrolls the app in macOS's Games app + "Now Playing"
+         overlay + Game Mode. Grimoire is a MUD/text client, so we
+         categorize it as a utility to stay out of that UI entirely. -->
     <key>LSApplicationCategoryType</key>
-    <string>public.app-category.games</string>
+    <string>public.app-category.utilities</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>
