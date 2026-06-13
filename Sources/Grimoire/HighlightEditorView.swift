@@ -31,11 +31,28 @@ struct HighlightEditorView: View {
     /// clicking into the field first.
     @State private var pendingFocusForId: UUID? = nil
 
-    /// Rules that match the active kind tab + current filter, sorted by
-    /// the current sort order. Group affiliation is preserved on the
-    /// rule itself -- the list layout consults `rule.groupId` to nest
-    /// each rule under its group.
+    /// One render's worth of list data, computed in a single pass.
     ///
+    /// `ordered` is the flat kind-filtered + searched + sorted list;
+    /// `membersByGroup` and `ungrouped` are that same list partitioned
+    /// by group affiliation. `matchCount`/`total` drive the count pill.
+    ///
+    /// This exists because the previous design read a `filteredRules`
+    /// computed property ~13 times per render (once per group header
+    /// for its count, once per group for its member ForEach, twice for
+    /// the ungrouped section, once for the count label) — each read
+    /// re-ran a full filter + sort over all ~900 rules. Building the
+    /// layout once and handing slices to the subviews collapses that to
+    /// a single pass, which is what makes selecting/filtering/toggling
+    /// in a large rule set feel snappy.
+    private struct EditorLayout {
+        var ordered: [Highlight] = []
+        var membersByGroup: [UUID: [Highlight]] = [:]
+        var ungrouped: [Highlight] = []
+        var matchCount: Int = 0
+        var total: Int = 0
+    }
+
     /// Filter syntax:
     /// - Plain text: case-insensitive substring against the match text.
     /// - `tag:regex|line|case|word|bold|italic|fg|bg|enabled|disabled|`
@@ -45,18 +62,44 @@ struct HighlightEditorView: View {
     /// - Multiple space-separated terms AND together, so
     ///   `tag:regex death` finds regex rules whose text contains
     ///   "death".
-    private var filteredRules: [Highlight] {
-        var rules = store.highlights.filter { $0.kind == listKind }
+    private func makeLayout() -> EditorLayout {
+        let started = CFAbsoluteTimeGetCurrent()
+        let kindFiltered = store.highlights.filter { $0.kind == listKind }
+        var searched = kindFiltered
         if !filterText.isEmpty {
             let groupsById = Dictionary(uniqueKeysWithValues: store.groups.map { ($0.id, $0) })
             let terms = filterText
                 .split(separator: " ", omittingEmptySubsequences: true)
                 .map(String.init)
-            for term in terms {
-                rules = rules.filter { ruleMatches($0, term: term, groups: groupsById) }
+            searched = kindFiltered.filter { rule in
+                terms.allSatisfy { ruleMatches(rule, term: $0, groups: groupsById) }
             }
         }
-        return sortOrder.apply(to: rules)
+        let ordered = sortOrder.apply(to: searched)
+
+        var layout = EditorLayout(
+            ordered: ordered,
+            matchCount: ordered.count,
+            total: kindFiltered.count
+        )
+        for rule in ordered {
+            if let gid = rule.groupId {
+                layout.membersByGroup[gid, default: []].append(rule)
+            } else {
+                layout.ungrouped.append(rule)
+            }
+        }
+
+        // Surface a regression early if this ever creeps back up: the
+        // whole point is that this runs once per render and stays cheap.
+        let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        if ms > 3 {
+            appLog("HighlightEditor",
+                   "makeLayout \(String(format: "%.1f", ms))ms"
+                   + " (\(layout.total) rules, filter=\(!filterText.isEmpty))",
+                   level: .info)
+        }
+        return layout
     }
 
     private func ruleMatches(_ rule: Highlight, term: String, groups: [UUID: HighlightGroup]) -> Bool {
@@ -102,14 +145,6 @@ struct HighlightEditorView: View {
         store.groups
     }
 
-    private func members(of group: HighlightGroup) -> [Highlight] {
-        filteredRules.filter { $0.groupId == group.id }
-    }
-
-    private var ungroupedRules: [Highlight] {
-        filteredRules.filter { $0.groupId == nil }
-    }
-
     var body: some View {
         HSplitView {
             list
@@ -126,23 +161,26 @@ struct HighlightEditorView: View {
             handleImport(result)
         }
         .onAppear {
-            if selection == nil, let first = filteredRules.first {
+            if selection == nil, let first = makeLayout().ordered.first {
                 selection = .rule(first.id)
             }
         }
         .onChange(of: listKind) { _, _ in
-            selection = filteredRules.first.map { .rule($0.id) }
+            selection = makeLayout().ordered.first.map { .rule($0.id) }
         }
     }
 
     // MARK: - List
 
     private var list: some View {
-        VStack(spacing: 0) {
+        // Single pass per render — every subview below reads from this
+        // instead of re-running the filter/sort. See `makeLayout()`.
+        let layout = makeLayout()
+        return VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text("Highlights").font(.headline)
                 Spacer()
-                Text(countLabel)
+                Text(countLabel(layout))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                 Menu {
@@ -187,16 +225,17 @@ struct HighlightEditorView: View {
 
             List(selection: $selection) {
                 ForEach(visibleGroups) { group in
-                    groupHeaderRow(group)
+                    let members = layout.membersByGroup[group.id] ?? []
+                    groupHeaderRow(group, memberCount: members.count)
                         .tag(HighlightSelection.group(group.id))
                     if !collapsedGroups.contains(group.id) {
-                        ForEach(members(of: group)) { rule in
+                        ForEach(members) { rule in
                             ruleRow(rule, indented: true)
                                 .tag(HighlightSelection.rule(rule.id))
                         }
                     }
                 }
-                if !ungroupedRules.isEmpty {
+                if !layout.ungrouped.isEmpty {
                     if !visibleGroups.isEmpty {
                         // Soft divider between the grouped section and
                         // the loose rules so it's visually obvious
@@ -206,7 +245,7 @@ struct HighlightEditorView: View {
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
                     }
-                    ForEach(ungroupedRules) { rule in
+                    ForEach(layout.ungrouped) { rule in
                         ruleRow(rule, indented: false)
                             .tag(HighlightSelection.rule(rule.id))
                     }
@@ -271,9 +310,8 @@ struct HighlightEditorView: View {
     /// also be moved into / out of the group from their own context
     /// menu in `ruleRow`.
     @ViewBuilder
-    private func groupHeaderRow(_ group: HighlightGroup) -> some View {
+    private func groupHeaderRow(_ group: HighlightGroup, memberCount: Int) -> some View {
         let isExpanded = !collapsedGroups.contains(group.id)
-        let memberCount = members(of: group).count
         HStack(spacing: 6) {
             Button {
                 if isExpanded {
@@ -411,10 +449,9 @@ struct HighlightEditorView: View {
     /// Count display in the list header. Shows total-after-filtering or
     /// `matches / total` while a filter is active so the user can tell
     /// how much the search narrowed the set.
-    private var countLabel: String {
-        let total = store.highlights.filter { $0.kind == listKind }.count
-        if filterText.isEmpty { return "\(total)" }
-        return "\(filteredRules.count)/\(total)"
+    private func countLabel(_ layout: EditorLayout) -> String {
+        if filterText.isEmpty { return "\(layout.total)" }
+        return "\(layout.matchCount)/\(layout.total)"
     }
 
     // MARK: - Detail
