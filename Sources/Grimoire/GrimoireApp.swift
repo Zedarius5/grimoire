@@ -188,9 +188,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    /// Idempotent end-of-shutdown step: cancel observers, SIGTERM
-    /// Lich, give the signal a moment to land, then reply true so
-    /// AppKit completes the terminate.
+    /// Idempotent end-of-shutdown step: cancel observers, then SIGTERM
+    /// Lich and wait for it to actually exit before replying so AppKit
+    /// completes the terminate.
     private func completeShutdown() {
         guard !didShutdown else { return }
         didShutdown = true
@@ -199,10 +199,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fallbackTimer?.cancel()
         fallbackTimer = nil
 
-        lich?.stop()
-        // Brief settle window for SIGTERM. Process termination is
-        // typically <50ms; we wait a bit longer to be safe.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        guard let lich, lich.isRunning else {
+            NSApp.reply(toApplicationShouldTerminate: true)
+            return
+        }
+        // Give Lich the window it needs to save script settings and let
+        // scripts wind down after SIGTERM (Doug's requested behavior),
+        // and reply the instant it's actually gone. The 3s ceiling is a
+        // backstop; a clean Lich exit is typically well under a second.
+        lich.terminateAndWait(timeout: 3) {
             NSApp.reply(toApplicationShouldTerminate: true)
         }
     }

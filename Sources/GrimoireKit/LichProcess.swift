@@ -95,4 +95,43 @@ public final class LichProcess: ObservableObject {
             status = .stopped
         }
     }
+
+    /// App-quit shutdown. Sends SIGTERM, then waits for Lich to
+    /// *actually* exit before calling `completion` (up to `timeout`).
+    ///
+    /// Per Doug (the Lich author): when the path is OS -> front-end ->
+    /// Lich proxy (which is exactly how Grimoire launches Lich), the
+    /// front-end tends to tear Ruby down too fast — Lich never gets the
+    /// beat it needs to save script settings and let scripts finish.
+    /// So instead of `stop()`'s fire-and-forget terminate, we hold the
+    /// process handle and poll its real `isRunning` until the OS reaps
+    /// it, giving Lich that window. The `timeout` is a backstop so a
+    /// wedged Lich can't block the app from quitting.
+    public func terminateAndWait(
+        timeout: TimeInterval,
+        completion: @escaping @MainActor () -> Void
+    ) {
+        guard let proc = process, proc.isRunning else {
+            completion()
+            return
+        }
+        proc.terminate()  // SIGTERM — Lich saves + winds down scripts here
+        poll(proc: proc, deadline: Date().addingTimeInterval(timeout), completion: completion)
+    }
+
+    private func poll(
+        proc: Process,
+        deadline: Date,
+        completion: @escaping @MainActor () -> Void
+    ) {
+        if !proc.isRunning || Date() >= deadline {
+            completion()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            MainActor.assumeIsolated {
+                self.poll(proc: proc, deadline: deadline, completion: completion)
+            }
+        }
+    }
 }
