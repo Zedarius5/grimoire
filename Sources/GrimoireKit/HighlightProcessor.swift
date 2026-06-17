@@ -8,12 +8,31 @@ public enum HighlightProcessor {
     /// a new line with runs split at match boundaries and `highlightFg/Bg`
     /// populated on the matched runs.
     public static func apply(_ rules: [Highlight], to line: RenderedLine) -> RenderedLine {
-        let active = rules.filter { $0.enabled && !$0.text.isEmpty }
-        guard !active.isEmpty, !line.runs.isEmpty else { return line }
+        apply(rules, to: line, useGate: true)
+    }
+
+    /// `useGate` exists so the equivalence test can compare the
+    /// Aho-Corasick-pruned path against the brute-force (all-rules) path
+    /// and assert identical output. Production always gates.
+    static func apply(_ rules: [Highlight], to line: RenderedLine, useGate: Bool) -> RenderedLine {
+        let allActive = rules.filter { $0.enabled && !$0.text.isEmpty }
+        guard !allActive.isEmpty, !line.runs.isEmpty else { return line }
 
         let plain = line.plainText as NSString
         let count = plain.length
         guard count > 0 else { return line }
+
+        // PRE-FILTER: prune to the rules that could possibly match this
+        // line via a single Aho-Corasick pass, instead of substring-
+        // scanning all (potentially thousands of) rules per line. The
+        // gate over-includes (a literal rule is a candidate iff its text
+        // occurs case-insensitively; regex / non-ASCII rules are always
+        // candidates), so the exact matcher below still does the real
+        // work and the output is identical to scanning every rule --
+        // proven by HighlightProcessorGateTests. Candidates keep their
+        // original relative order so color last-write-wins is preserved.
+        let active = useGate ? candidateRules(allActive, line: line.plainText) : allActive
+        guard !active.isEmpty else { return line }
 
         // Fast path: skip the expensive per-character override allocation
         // and run-walk below when no rule even *occurs* in this line.
@@ -242,6 +261,72 @@ public enum HighlightProcessor {
     /// boundaries so existing literal-rule semantics carry over.
     private static func compilePattern(_ s: String, wholeWord: Bool) -> String {
         wholeWord ? "\\b" + s + "\\b" : s
+    }
+
+    // MARK: - Aho-Corasick pruning gate
+
+    /// A built gate for one rule set: the automaton over ASCII literal
+    /// needles (keyed by their index in `active`), plus the indices of
+    /// rules that bypass the gate. Regex rules bypass (the automaton is
+    /// literal-only); so do literal rules with non-ASCII text, where
+    /// Swift vs Foundation case-folding could in principle diverge and a
+    /// pruned rule would be a correctness bug -- ungating them keeps the
+    /// gate's "never drop a possible match" invariant airtight.
+    private struct Gate {
+        let automaton: AhoCorasick
+        let ungatedIndices: [Int]
+    }
+
+    nonisolated(unsafe) private static var cachedGate: Gate?
+    nonisolated(unsafe) private static var cachedGateKey: Int = 0
+    private static let gateLock = NSLock()
+
+    /// Subset of `active` that could possibly match `line`, in the same
+    /// relative order (so the exact matcher's last-write-wins color
+    /// precedence is unchanged). A literal rule is included iff its text
+    /// occurs case-insensitively in the line; ungated rules are always
+    /// included. This is a superset of the rules that actually match, so
+    /// running the exact matcher over it yields identical output to
+    /// running over every rule.
+    static func candidateRules(_ active: [Highlight], line: String) -> [Highlight] {
+        let gate = gateFor(active)
+        var idx = gate.automaton.search(line.lowercased())
+        idx.formUnion(gate.ungatedIndices)
+        guard idx.count < active.count else { return active }
+        return idx.sorted().map { active[$0] }
+    }
+
+    /// Builds (or returns a cached) gate for `active`. Keyed by a content
+    /// hash of the rules' text + pattern flag, so the automaton is rebuilt
+    /// only when the rule set actually changes -- the per-line cost is
+    /// then one hash + one O(lineLength) search, not one substring scan
+    /// per rule.
+    private static func gateFor(_ active: [Highlight]) -> Gate {
+        var hasher = Hasher()
+        for r in active {
+            hasher.combine(r.text)
+            hasher.combine(r.usesPattern)
+        }
+        let key = hasher.finalize()
+
+        gateLock.lock()
+        defer { gateLock.unlock() }
+        if let g = cachedGate, cachedGateKey == key { return g }
+
+        let ac = AhoCorasick()
+        var ungated: [Int] = []
+        for (i, r) in active.enumerated() {
+            if r.usesPattern || !r.text.allSatisfy(\.isASCII) {
+                ungated.append(i)
+            } else {
+                ac.add(r.text.lowercased(), id: i)
+            }
+        }
+        ac.build()
+        let gate = Gate(automaton: ac, ungatedIndices: ungated)
+        cachedGate = gate
+        cachedGateKey = key
+        return gate
     }
 
     /// Returns the exact substring of `text` that `rule` matched, or
