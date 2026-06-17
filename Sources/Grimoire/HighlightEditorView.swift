@@ -161,6 +161,11 @@ struct HighlightEditorView: View {
             handleImport(result)
         }
         .onAppear {
+            // Start every editor session with all groups collapsed, so a
+            // large grouped rule set (e.g. the per-element crit groups)
+            // opens as a compact list of group headers rather than a wall
+            // of nested rules. The user expands the ones they want.
+            collapsedGroups = Set(store.groups.map(\.id))
             if selection == nil, let first = makeLayout().ordered.first {
                 selection = .rule(first.id)
             }
