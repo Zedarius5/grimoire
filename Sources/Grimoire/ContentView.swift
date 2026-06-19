@@ -187,9 +187,13 @@ struct ContentView: View {
             }
             // Wire up server-pushed browser launches (`GOAL`, `SIMUCOIN
             // STORE`, etc.). The client emits these on the main thread
-            // already; we just dispatch to the system browser.
+            // already. Route through SafeExternalURL so the user confirms
+            // web links (and non-web schemes are blocked + explained) —
+            // the game stream is only semi-trusted.
             client.onLaunchURL = { url in
-                _ = NSWorkspace.shared.open(url)
+                MainActor.assumeIsolated {
+                    SafeExternalURL.open(url)
+                }
             }
             // Notification dispatch: scan every newly-appended line
             // against the user's `notify`-flagged highlight rules and

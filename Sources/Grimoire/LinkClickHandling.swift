@@ -46,8 +46,11 @@ struct GrimoireLinkRouter {
 
         switch url.host {
         case "href":
+            // Server-supplied external link. Guard it the same way as
+            // server-pushed <LaunchURL>: confirm web links, block other
+            // schemes. The href value comes from semi-trusted game data.
             if let raw = params["url"], let target = URL(string: raw) {
-                NSWorkspace.shared.open(target)
+                SafeExternalURL.open(target)
             }
             return .handled
 
