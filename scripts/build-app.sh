@@ -25,8 +25,19 @@ BUNDLE_ID="${BUNDLE_ID:-com.zedarius.Grimoire}"
 APP_NAME="Grimoire"
 OUTPUT_DIR="build"
 APP_PATH="$OUTPUT_DIR/$APP_NAME.app"
-INSTALL="${INSTALL:-1}"
-LAUNCH="${LAUNCH:-1}"
+NOTARIZE="${NOTARIZE:-0}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-grimoire-notary}"
+
+# A notarized build is for distribution, not local iteration: it defaults to
+# producing the shareable artifact only (no install/launch). Override with an
+# explicit INSTALL=1 / LAUNCH=1 if you also want it on this Mac.
+if [ "$NOTARIZE" = "1" ]; then
+    INSTALL="${INSTALL:-0}"
+    LAUNCH="${LAUNCH:-0}"
+else
+    INSTALL="${INSTALL:-1}"
+    LAUNCH="${LAUNCH:-1}"
+fi
 
 # Auto-detect a signing identity unless the caller pinned one. Prefers
 # real certs (Apple Development / Apple Distribution / Developer ID
@@ -34,13 +45,27 @@ LAUNCH="${LAUNCH:-1}"
 # rebuilds. Falls back to ad-hoc if no real cert is found -- in that
 # case macOS will re-prompt for file/keychain access on every rebuild.
 if [ -z "${CODESIGN_IDENTITY:-}" ]; then
-    CODESIGN_IDENTITY="$(security find-identity -v -p codesigning \
-        | grep -E 'Apple Development|Apple Distribution|Developer ID Application' \
-        | head -1 \
-        | awk -F'"' '{print $2}' \
-        || true)"
-    if [ -z "$CODESIGN_IDENTITY" ]; then
-        CODESIGN_IDENTITY="-"
+    if [ "$NOTARIZE" = "1" ]; then
+        # Notarization requires a "Developer ID Application" cert; Apple
+        # Development / Apple Distribution certs can't be notarized for
+        # direct (non-App-Store) distribution.
+        CODESIGN_IDENTITY="$(security find-identity -v -p codesigning \
+            | grep -E 'Developer ID Application' \
+            | head -1 | awk -F'"' '{print $2}' || true)"
+        if [ -z "$CODESIGN_IDENTITY" ]; then
+            echo "ERROR: NOTARIZE=1 needs a 'Developer ID Application' certificate," >&2
+            echo "       but none was found in your keychain. Create one in Xcode" >&2
+            echo "       (Settings > Accounts > Manage Certificates > + ) or at" >&2
+            echo "       developer.apple.com, then re-run." >&2
+            exit 1
+        fi
+    else
+        CODESIGN_IDENTITY="$(security find-identity -v -p codesigning \
+            | grep -E 'Apple Development|Apple Distribution|Developer ID Application' \
+            | head -1 | awk -F'"' '{print $2}' || true)"
+        if [ -z "$CODESIGN_IDENTITY" ]; then
+            CODESIGN_IDENTITY="-"
+        fi
     fi
 fi
 SIGN_LABEL="$CODESIGN_IDENTITY"
@@ -157,17 +182,60 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
+# Notarization requires a secure (Apple-issued) timestamp; local/ad-hoc
+# builds skip it to stay fast and offline.
+TIMESTAMP_FLAG="--timestamp=none"
+[ "$NOTARIZE" = "1" ] && TIMESTAMP_FLAG="--timestamp"
+
 echo "==> Code-signing ($SIGN_LABEL)"
 codesign --force --deep --sign "$CODESIGN_IDENTITY" \
     --identifier "$BUNDLE_ID" \
     --options runtime \
-    --timestamp=none \
+    $TIMESTAMP_FLAG \
     "$APP_PATH" 2>&1 | grep -v "replacing existing signature" || true
 
 # Verify; fail loudly so we don't hand the user a broken bundle.
 codesign --verify --verbose "$APP_PATH" 2>&1 | sed 's/^/    /'
 
 echo "==> $APP_PATH built ($SHORT_VERSION, build $BUNDLE_VERSION, $SHORT_SHA)"
+
+# --- Notarize + staple (direct distribution, outside the App Store) ---
+
+if [ "$NOTARIZE" = "1" ]; then
+    if [ "$CODESIGN_IDENTITY" = "-" ]; then
+        echo "ERROR: refusing to notarize an ad-hoc-signed app." >&2
+        exit 1
+    fi
+
+    DIST_DIR="$OUTPUT_DIR/dist"
+    mkdir -p "$DIST_DIR"
+    SUBMIT_ZIP="$DIST_DIR/$APP_NAME-submit.zip"
+    DIST_ZIP="$DIST_DIR/$APP_NAME-$SHORT_VERSION.zip"
+
+    echo "==> Zipping for notarization"
+    /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$SUBMIT_ZIP"
+
+    echo "==> Submitting to Apple notary service (keychain profile: $NOTARY_PROFILE)"
+    echo "    First time? Store credentials once with:"
+    echo "      xcrun notarytool store-credentials \"$NOTARY_PROFILE\" \\"
+    echo "        --apple-id <your-apple-id> --team-id <TEAMID> --password <app-specific-pw>"
+    # --wait blocks until Apple returns Accepted/Invalid; a non-Accepted
+    # result is non-zero and aborts via set -e. The stapler step below is a
+    # second safety net (it fails if no ticket was issued).
+    xcrun notarytool submit "$SUBMIT_ZIP" \
+        --keychain-profile "$NOTARY_PROFILE" \
+        --wait
+
+    echo "==> Stapling the notarization ticket to the app"
+    xcrun stapler staple "$APP_PATH"
+    xcrun stapler validate "$APP_PATH"
+
+    # Re-zip the now-stapled app as the shareable artifact (the submission
+    # zip held the pre-staple copy).
+    rm -f "$SUBMIT_ZIP"
+    /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$DIST_ZIP"
+    echo "==> Distributable (notarized + stapled): $DIST_ZIP"
+fi
 
 # --- Install + launch ---
 
