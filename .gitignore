@@ -11,3 +11,12 @@ DerivedData/
 # User-private Claude Code allowlist (project-shared rules live in
 # .claude/settings.json -- that one IS tracked).
 .claude/settings.local.json
+
+# Personal, per-user config snapshots -- NOT shipped defaults. Each player's
+# highlight set lives in their own app preferences; these JSON exports are
+# personal backups, not part of the public project.
+backups/highlights-backup-*.json
+
+# Internal working notes / specs -- kept locally, not part of the public repo.
+docs/superpowers/
+docs/crit-wiki-issues.md
