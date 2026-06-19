@@ -44,22 +44,33 @@ public enum SgeAuth {
     ) async throws -> GameCredentials {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: rubyPath)
-        proc.arguments = [scriptPath, account, password, character, gameCode]
+        // Password is NOT passed here — it goes over stdin below so it never
+        // appears in the process table (`ps`), where other local programs
+        // could read it.
+        proc.arguments = [scriptPath, account, character, gameCode]
 
         var env = ProcessInfo.processInfo.environment
         env["LICH_DIR"] = lichDir
         proc.environment = env
 
+        let inPipe  = Pipe()
         let outPipe = Pipe()
         let errPipe = Pipe()
+        proc.standardInput  = inPipe
         proc.standardOutput = outPipe
-        proc.standardError = errPipe
+        proc.standardError  = errPipe
 
         do {
             try proc.run()
         } catch {
             throw SgeAuthError.ioError("Couldn't launch ruby: \(error.localizedDescription)")
         }
+
+        // Hand the password to the helper over stdin (single line) and close
+        // the write end so its `STDIN.gets` returns. Output is tiny (one JSON
+        // line), so there's no pipe-buffer deadlock with the read below.
+        inPipe.fileHandleForWriting.write(Data((password + "\n").utf8))
+        inPipe.fileHandleForWriting.closeFile()
 
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<GameCredentials, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {

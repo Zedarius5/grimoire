@@ -2,8 +2,16 @@
 # Authenticates against Simutronics SGE using Lich's existing EAccess module
 # and prints JSON game credentials suitable for proxying through Lich.
 #
+# This is OUR script (a thin wrapper); it loads Lich's EAccess library to do
+# the actual SGE handshake. It ships inside Grimoire.app's resource bundle
+# (declared in Package.swift) and is resolved at runtime via Bundle.module,
+# so it works on any user's Mac regardless of where the source lives.
+#
 # Usage:
-#   sge_auth.rb <account> <password> <character> <game_code>
+#   sge_auth.rb <account> <character> <game_code>
+#
+# The account PASSWORD is read from stdin (one line), NOT passed as an
+# argument, so it never appears in the process table (`ps`).
 #
 # Output (stdout, on success):
 #   {"host":"...","port":N,"key":"..."}
@@ -16,7 +24,7 @@
 
 require 'json'
 
-# Lich install location. Override with LICH_DIR env var if needed.
+# Lich install location. Override with LICH_DIR env var (Grimoire sets this).
 LICH_DIR = ENV['LICH_DIR'] || File.expand_path('~/Gemstone')
 LIB_DIR  = File.join(LICH_DIR, 'lib')
 DATA_DIR = File.join(LICH_DIR, 'data')
@@ -30,9 +38,14 @@ end
 
 require File.join(LIB_DIR, 'common', 'authentication', 'eaccess.rb')
 
-account, password, character, game_code = ARGV
-if [account, password, character, game_code].any? { |v| v.nil? || v.empty? }
-  STDERR.puts 'usage: sge_auth.rb <account> <password> <character> <game_code>'
+account, character, game_code = ARGV
+# Password arrives on stdin (one line) so it stays out of argv / `ps`.
+password = STDIN.gets
+password = password.chomp if password
+
+if [account, character, game_code].any? { |v| v.nil? || v.empty? } ||
+   password.nil? || password.empty?
+  STDERR.puts 'usage: sge_auth.rb <account> <character> <game_code>  (password on stdin)'
   exit 1
 end
 

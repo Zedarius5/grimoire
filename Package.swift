@@ -17,6 +17,10 @@ let package = Package(
                 // browser. Kept in their own subdirectory so future asset
                 // sets can sit alongside without colliding.
                 .process("Resources/game-icons"),
+                // SGE login helper (our Ruby wrapper around Lich's EAccess).
+                // Bundled so the app resolves it at runtime via Bundle.module
+                // instead of a hardcoded checkout path — works on any Mac.
+                .copy("Resources/sge_auth.rb"),
             ]
         ),
         .target(
