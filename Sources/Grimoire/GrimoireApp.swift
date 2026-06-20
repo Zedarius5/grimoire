@@ -43,6 +43,10 @@ struct GrimoireApp: App {
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1100, height: 750)
         .commands {
+            // File ▸ Open Log… — review an old log with current highlights.
+            CommandGroup(after: .newItem) {
+                OpenLogMenuItem()
+            }
             // "Debug" menu in the menu bar with utilities that aren't part
             // of normal play — icon browser + wounds preview harness.
             CommandMenu("Debug") {
@@ -85,6 +89,15 @@ struct GrimoireApp: App {
             PerfDebugView()
         }
         .defaultSize(width: 520, height: 600)
+
+        // One viewer window per opened log file (keyed by URL).
+        WindowGroup(for: URL.self) { $url in
+            if let url {
+                LogViewerView(url: url)
+                    .environmentObject(highlights)
+            }
+        }
+        .defaultSize(width: 900, height: 700)
     }
 }
 
