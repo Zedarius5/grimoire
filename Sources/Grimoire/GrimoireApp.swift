@@ -48,10 +48,8 @@ struct GrimoireApp: App {
                 OpenLogMenuItem()
             }
             // "Debug" menu in the menu bar with utilities that aren't part
-            // of normal play — icon browser + wounds preview harness.
+            // of normal play.
             CommandMenu("Debug") {
-                OpenIconBrowserMenuItem()
-                OpenWoundsDebugMenuItem()
                 OpenPerfDebugMenuItem()
             }
         }
@@ -75,16 +73,6 @@ struct GrimoireApp: App {
         }
         .defaultSize(width: 920, height: 620)
 
-        Window("Icon Browser", id: "icons") {
-            IconBrowserView()
-        }
-        .defaultSize(width: 820, height: 620)
-
-        Window("Wounds Debug", id: "wounds-debug") {
-            WoundsDebugView()
-        }
-        .defaultSize(width: 720, height: 540)
-
         Window("Performance", id: "perf-debug") {
             PerfDebugView()
         }
@@ -98,34 +86,6 @@ struct GrimoireApp: App {
             }
         }
         .defaultSize(width: 900, height: 700)
-    }
-}
-
-/// Menu-bar item that opens the Icon Browser window. Lives as its own
-/// SwiftUI view so it can use the `openWindow` environment value (which
-/// isn't accessible from inside the `body` of an `App`).
-private struct OpenIconBrowserMenuItem: View {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button("Icon Browser") {
-            openWindow(id: "icons")
-        }
-        .keyboardShortcut("i", modifiers: [.command, .option])
-    }
-}
-
-/// Menu-bar item that opens the Wounds Debug window. Use this while
-/// iterating on `BodyDiagram` visuals so you don't have to take damage
-/// in-game to see how each wound/scar rank renders.
-private struct OpenWoundsDebugMenuItem: View {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button("Wounds Debug") {
-            openWindow(id: "wounds-debug")
-        }
-        .keyboardShortcut("w", modifiers: [.command, .option])
     }
 }
 
