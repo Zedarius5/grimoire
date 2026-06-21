@@ -107,27 +107,31 @@ struct MacroEditorView: View {
     }
 
     private func header(setIdx: Int) -> some View {
+        // Capture the stable set id now (render time — the index is valid).
+        // The commit closures below fire later from `.onDisappear`, possibly
+        // after this set was deleted, so they must resolve by id, never via
+        // the captured `setIdx`.
+        let setId = macros.config.sets[setIdx].id
         // Wrap in an inner view with stable identity so the local-state
         // name draft below resets on set switch (and flushes on the
         // outgoing set's `.onDisappear`).
-        SetNameHeader(
+        return SetNameHeader(
             set: macros.config.sets[setIdx],
-            isActive: macros.activeSetId == macros.config.sets[setIdx].id,
+            isActive: macros.activeSetId == setId,
             onCommitName: { newName in
-                guard let i = macros.config.sets.firstIndex(where: { $0.id == macros.config.sets[setIdx].id }) else { return }
-                if macros.config.sets[i].name != newName {
-                    macros.config.sets[i].name = newName
-                }
+                macros.config.renameSet(id: setId, to: newName)
             },
             onActivate: {
-                macros.setActive(setId: macros.config.sets[setIdx].id)
+                macros.setActive(setId: setId)
             }
         )
-        .id(macros.config.sets[setIdx].id)
+        .id(setId)
     }
 
     private func bindingsList(setIdx: Int) -> some View {
-        ScrollViewReader { proxy in
+        // See `header`: capture the id for the deferred row-commit closures.
+        let setId = macros.config.sets[setIdx].id
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if macros.config.sets[setIdx].bindings.isEmpty {
@@ -141,10 +145,10 @@ struct MacroEditorView: View {
                                 binding: binding,
                                 requestedCaptureForId: $pendingCaptureForId,
                                 onCommit: { updated in
-                                    commitBinding(setIdx: setIdx, updated: updated)
+                                    commitBinding(setId: setId, updated: updated)
                                 },
                                 onDelete: {
-                                    deleteBinding(setIdx: setIdx, id: binding.id)
+                                    deleteBinding(setId: setId, id: binding.id)
                                 }
                             )
                             .id(binding.id)
@@ -181,9 +185,10 @@ struct MacroEditorView: View {
     }
 
     private func footer(setIdx: Int) -> some View {
-        HStack {
+        let setId = macros.config.sets[setIdx].id
+        return HStack {
             Button {
-                addBinding(setIdx: setIdx)
+                addBinding(setId: setId)
             } label: {
                 Label("Add binding", systemImage: "plus")
             }
@@ -200,25 +205,23 @@ struct MacroEditorView: View {
 
     // MARK: - Mutations
 
-    private func addBinding(setIdx: Int) {
+    private func addBinding(setId: Int) {
         let fresh = MacroBinding(key: "", action: "")
-        macros.config.sets[setIdx].bindings.append(fresh)
-        // Trigger scroll-to-and-auto-capture for the new row.
-        pendingCaptureForId = fresh.id
-    }
-
-    private func deleteBinding(setIdx: Int, id: UUID) {
-        macros.config.sets[setIdx].bindings.removeAll { $0.id == id }
-    }
-
-    private func commitBinding(setIdx: Int, updated: MacroBinding) {
-        guard let i = macros.config.sets[setIdx].bindings.firstIndex(where: { $0.id == updated.id }) else { return }
-        // Skip the write if nothing meaningful changed. Without this guard
-        // the row's `.onDisappear` flush would still trip `@Published`
-        // when the user just navigates away.
-        if macros.config.sets[setIdx].bindings[i] != updated {
-            macros.config.sets[setIdx].bindings[i] = updated
+        if macros.config.addBinding(toSet: setId, binding: fresh) != nil {
+            // Trigger scroll-to-and-auto-capture for the new row.
+            pendingCaptureForId = fresh.id
         }
+    }
+
+    private func deleteBinding(setId: Int, id: UUID) {
+        macros.config.removeBinding(fromSet: setId, bindingId: id)
+    }
+
+    private func commitBinding(setId: Int, updated: MacroBinding) {
+        // Resolve by set id, not a captured index: this fires from a row's
+        // `.onDisappear`, which can run after the set was deleted. The
+        // model method also skips the write when nothing changed.
+        macros.config.updateBinding(inSet: setId, to: updated)
     }
 
     private func addSet() {
