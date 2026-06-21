@@ -61,7 +61,7 @@ clients.
 ### Option A — download (recommended)
 
 1. Grab the latest `Grimoire-<version>.zip` from the
-   [Releases](https://github.com/OWNER/REPO/releases) page.
+   [Releases](https://github.com/Zedarius5/grimoire/releases) page.
 2. Unzip and drag **Grimoire.app** into `/Applications`.
 3. Launch it. Release builds are notarized, so it opens without Gatekeeper
    warnings.
@@ -71,7 +71,7 @@ clients.
 Requires the Xcode command-line tools (Swift 6).
 
 ```bash
-git clone https://github.com/OWNER/REPO.git
+git clone https://github.com/Zedarius5/grimoire.git
 cd grimoire
 swift build            # quick compile check
 ./scripts/build-app.sh # assembles + signs Grimoire.app, installs it, launches
