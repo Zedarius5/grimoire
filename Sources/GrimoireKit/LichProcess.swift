@@ -38,13 +38,11 @@ public final class LichProcess: ObservableObject {
         proc.arguments = [lichPath] + args
 
         // GUI-launched macOS apps don't inherit a shell environment, so
-        // LANG/LC_ALL are unset when we spawn Lich. Ruby then defaults
-        // `File.open` to US-ASCII, and any `.lic` containing a byte >0x7F
-        // (smart quotes, em-dash, accented name) crashes at script load
-        // with "invalid byte sequence in US-ASCII". From a Terminal these
-        // same scripts work because the shell injects LANG=en_US.UTF-8.
-        // Forcing UTF-8 here makes the spawn behave the same as a Terminal
-        // launch without touching Lich core or any user scripts.
+        // LANG/LC_ALL are unset. Ruby then defaults `File.open` to US-ASCII,
+        // and any `.lic` with a byte >0x7F (smart quotes, em-dash, accented
+        // name) crashes at load with "invalid byte sequence in US-ASCII".
+        // Forcing UTF-8 here matches a Terminal launch without touching Lich
+        // core or user scripts.
         var env = ProcessInfo.processInfo.environment
         env["LANG"] = "en_US.UTF-8"
         env["LC_ALL"] = "en_US.UTF-8"
@@ -96,16 +94,14 @@ public final class LichProcess: ObservableObject {
         }
     }
 
-    /// App-quit shutdown. Sends SIGTERM, then waits for Lich to
-    /// *actually* exit before calling `completion` (up to `timeout`).
+    /// App-quit shutdown. Sends SIGTERM, then waits for Lich to *actually*
+    /// exit before calling `completion` (up to `timeout`).
     ///
-    /// Per Doug (the Lich author): when the path is OS -> front-end ->
-    /// Lich proxy (which is exactly how Grimoire launches Lich), the
-    /// front-end tends to tear Ruby down too fast — Lich never gets the
-    /// beat it needs to save script settings and let scripts finish.
-    /// So instead of `stop()`'s fire-and-forget terminate, we hold the
-    /// process handle and poll its real `isRunning` until the OS reaps
-    /// it, giving Lich that window. The `timeout` is a backstop so a
+    /// When the launch path is OS -> front-end -> Lich proxy (how Grimoire
+    /// launches Lich), tearing Ruby down too fast leaves Lich no time to save
+    /// script settings and let scripts finish. So instead of `stop()`'s
+    /// fire-and-forget terminate, we hold the process handle and poll its real
+    /// `isRunning` until the OS reaps it. The `timeout` is a backstop so a
     /// wedged Lich can't block the app from quitting.
     public func terminateAndWait(
         timeout: TimeInterval,

@@ -1,14 +1,12 @@
 import Foundation
 
-/// "Which build am I running?" helper. Composes a title-bar label
-/// from the current git short SHA (read from `.git/HEAD` near the
-/// executable) and the executable's modification time, so the user
-/// can speak the same `commit-hash` language as the repo AND spot
-/// a "SHA shows the new pull but I haven't rebuilt yet" mismatch
-/// (the timestamp would be older than the latest commit's date).
+/// "Which build am I running?" helper. Composes a title-bar label from the git
+/// short SHA (read from `.git/HEAD` near the executable) and the executable's
+/// modification time — the SHA identifies the commit, and the timestamp reveals
+/// a "pulled but not rebuilt yet" mismatch (timestamp older than the commit).
 ///
-/// Cached because none of this can change at runtime and the syscalls
-/// shouldn't repeat per body re-eval.
+/// Cached because none of this changes at runtime; no need to repeat the
+/// syscalls per body re-eval.
 enum BuildInfo {
 
     static let label: String = computeLabel()

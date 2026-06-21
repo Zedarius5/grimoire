@@ -3,27 +3,20 @@ import UserNotifications
 import GrimoireKit
 
 /// macOS notification dispatch for the highlight-match path. Requests
-/// permission on first use; subsequent calls fan out to
-/// `UNUserNotificationCenter` if the user granted access.
+/// permission on first use, then fans out to `UNUserNotificationCenter`.
 ///
-/// Per-rule throttle: a rule that matches dozens of lines in a row
-/// (e.g. a chatty regex) doesn't flood the notification center. The
-/// throttle window is per-rule-id so independent rules don't suppress
-/// each other.
+/// Throttled per-rule-id so a chatty rule doesn't flood the notification
+/// center while independent rules don't suppress each other.
 ///
-/// Note: macOS UserNotifications require the running binary to be
-/// inside a proper app bundle with a bundle identifier. SPM-built
-/// executables run directly from `.build/` won't have one, so
-/// `requestAuthorization` will fail with "not bundled" and we'll log
-/// it instead of crashing. Run from a built `.app` for live behavior.
+/// Note: UserNotifications require a proper app bundle with a bundle id.
+/// Unbundled SPM runs from `.build/` fail authorization, which we log rather
+/// than crash on; run from a built `.app` for live behavior.
 @MainActor
 final class NotificationManager {
 
     static let shared = NotificationManager()
 
-    /// Minimum gap between notifications fired by the SAME rule, in
-    /// seconds. Tunable; 5s is a sensible "don't drown me" floor that
-    /// still catches genuinely-spaced events.
+    /// Minimum gap (seconds) between notifications fired by the same rule.
     private static let perRuleThrottle: TimeInterval = 5
 
     private var authorizationRequested = false
@@ -32,30 +25,21 @@ final class NotificationManager {
     /// can apply the per-rule throttle without scanning history.
     private var lastFiredAt: [UUID: Date] = [:]
 
-    /// Intentionally no UNUserNotificationCenterDelegate set: that
-    /// would let us force foreground banner presentation, but the
-    /// macOS default ("only show banners when the app is in the
-    /// background") is what the user actually wants. A match while
-    /// you're already watching the feed shouldn't pop a banner on
-    /// top of itself; a match while you're tabbed away SHOULD alert
-    /// you. The default behavior handles both cases.
+    /// Intentionally no UNUserNotificationCenterDelegate: that would force
+    /// foreground banners, but the macOS default (banners only when
+    /// backgrounded) is what's wanted -- no banner while you're watching the
+    /// feed, but an alert when you're tabbed away.
     private init() {}
 
-    /// Posts a notification for a highlight match.
+    /// Posts a notification for a highlight match. Drops repeat fires from the
+    /// same rule within `perRuleThrottle` seconds. Returns immediately; the
+    /// notification-center work is async.
     /// - Parameters:
     ///   - rule: the rule that fired (used as the throttle key).
-    ///   - matchedText: the actual substring of the game line that
-    ///     was highlighted -- for a regex rule this is the matched
-    ///     span, for a `entireLine` rule the whole line, etc. Shown
-    ///     as the notification body so the user sees what hit, not
-    ///     the rule's match pattern.
-    ///   - groupName: optional name of the rule's group; nil when
-    ///     the rule isn't grouped. Shown as the subtitle (with a
-    ///     "No highlight group" fallback so the slot isn't blank).
-    ///
-    /// Per-rule throttling drops repeat fires within
-    /// `perRuleThrottle` seconds. Returns immediately; the UN
-    /// center work is async.
+    ///   - matchedText: the highlighted substring of the line (the matched span,
+    ///     or the whole line for `entireLine`), shown as the notification body.
+    ///   - groupName: the rule's group name, or nil; shown as the subtitle (with
+    ///     a "No highlight group" fallback).
     func notify(rule: Highlight, matchedText: String, groupName: String?) {
         if let last = lastFiredAt[rule.id],
            Date().timeIntervalSince(last) < Self.perRuleThrottle {
@@ -96,16 +80,11 @@ final class NotificationManager {
 
     private func deliver(ruleId: UUID, matchedText: String, groupName: String?) async {
         let content = UNMutableNotificationContent()
-        // Fixed title -- the system already shows "Grimoire" next to
-        // the icon, so this slot describes the event itself.
+        // Fixed title; the system already shows "Grimoire" by the icon.
         content.title = "Highlighted text found"
-        // Group name in the subtitle gives the user immediate context
-        // for which bucket of rules fired. Explicit fallback string
-        // for ungrouped rules so the slot isn't blank.
+        // Subtitle = group name (which bucket fired), with a fallback so it's not blank.
         content.subtitle = (groupName?.isEmpty == false) ? groupName! : "No highlight group"
-        // Body is the actual highlighted span (for regex matches that's
-        // the substring that hit; for entireLine rules it's the whole
-        // line). Trimmed for tidy display.
+        // Body = the highlighted span, trimmed for display.
         content.body = matchedText.trimmingCharacters(in: .whitespacesAndNewlines)
         content.sound = .default
 

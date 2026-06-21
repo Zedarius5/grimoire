@@ -45,8 +45,7 @@ public enum SgeAuth {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: rubyPath)
         // Password is NOT passed here — it goes over stdin below so it never
-        // appears in the process table (`ps`), where other local programs
-        // could read it.
+        // appears in the process table (`ps`), readable by other local programs.
         proc.arguments = [scriptPath, account, character, gameCode]
 
         var env = ProcessInfo.processInfo.environment

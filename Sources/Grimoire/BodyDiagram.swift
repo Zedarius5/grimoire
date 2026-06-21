@@ -1,20 +1,14 @@
 import SwiftUI
 import GrimoireKit
 
-/// Wounds widget for the UberBar dialog. A simple front-view paperdoll
-/// silhouette with numbered "pip" overlays at each affected body part:
-/// red for injuries, tan for scars, with the rank (1/2/3) printed inside.
+/// Wounds widget for the UberBar dialog: a front-view paperdoll silhouette
+/// with numbered pip overlays per affected body part (red for injuries, tan
+/// for scars, rank 1/2/3 printed inside). Severity reads from both colour and
+/// number so it stays scannable and accessible regardless of colour vision.
 ///
-/// Severity reads from both colour *and* number so it stays scannable at a
-/// glance and remains accessible regardless of colour perception.
-///
-/// Parts without a natural front-view position render in the silhouette's
-/// own dead-space zones rather than getting squeezed onto the body:
-/// - **Eyes**: in the gap between the head and the shoulders (one per
-///   side, with the pair pulled out wide so each pip is fully visible).
-/// - **Back / Nrvs**: in the empty space beside the legs, under the
-///   arms, with short labels below each pip so the user can tell which
-///   is which.
+/// Parts with no natural front-view position (eyes, back, nerves) render in
+/// the silhouette's dead-space zones rather than being squeezed onto the body
+/// — see `OffBodyAnchor`.
 struct BodyDiagram: View {
     let wounds: Wounds
 
@@ -45,10 +39,9 @@ struct BodyDiagram: View {
                     }
                 }
 
-                // Off-body parts — labeled pip+label vertical stacks in the
-                // dead space outside the silhouette. Eyes sit above the
-                // shoulders (one each side); back/nerves below, beside the
-                // legs.
+                // Off-body parts — labeled pip+text stacks in the dead space
+                // outside the silhouette (eyes above the shoulders;
+                // back/nerves below, beside the legs).
                 ForEach(OffBodyAnchor.all) { anchor in
                     if let info = wounds.parts[anchor.part],
                        let kind = pipKind(for: info) {
@@ -95,14 +88,10 @@ struct BodyDiagram: View {
 
 // MARK: - Pip
 
-/// One numbered severity badge — red for injury, tan for scar, with the
-/// rank (1/2/3) printed in the middle.
-///
-/// Uses the `N.circle.fill` SF Symbol family so the number is
-/// type-set-centered by Apple's typography (rather than fighting with
-/// `Text` baseline metrics, which leave the glyph visibly low inside
-/// the circle). `.palette` rendering colours the digit as the primary
-/// foreground and the circle as the secondary.
+/// One numbered severity badge — red for injury, tan for scar, rank 1/2/3 in
+/// the middle. Uses the `N.circle.fill` SF Symbol so the number is centered
+/// by Apple's typography (a `Text` overlay sits visibly low in the circle).
+/// `.palette` rendering colours the digit and the circle separately.
 struct WoundPip: View {
     enum Kind { case injury, scar }
 
@@ -128,14 +117,11 @@ struct WoundPip: View {
 
 // MARK: - Silhouette shape
 
-/// A stylized front-view human paperdoll outline drawn as a single Shape.
-/// All sub-figures (head, neck, torso, arms, hands, legs) are added to one
-/// `Path` so a single stroke renders the whole silhouette without seams.
-///
-/// Proportions are normalized to the shape's `rect` and tuned by eye to
-/// look like a recognisable standing figure. Legs are intentionally
-/// stopped well above the bottom edge so the off-body Back/Nrvs labels
-/// have room to sit beside the lower body without colliding with feet.
+/// Front-view paperdoll outline drawn as a single Shape — all sub-figures go
+/// into one `Path` so a single stroke renders the silhouette without seams.
+/// Proportions are normalized to `rect`. Legs stop well above the bottom edge
+/// so the off-body Back/Nrvs labels can sit beside the lower body without
+/// colliding with feet.
 struct SilhouetteShape: Shape {
     func path(in rect: CGRect) -> Path {
         let w = rect.width
@@ -163,9 +149,9 @@ struct SilhouetteShape: Shape {
         torso.closeSubpath()
         path.addPath(torso)
 
-        // Arms — capsules hanging at sides, just outside the shoulders.
-        // Shortened so the figure's proportions read less spider-like
-        // and so there's room for the eye labels above the shoulders.
+        // Arms — capsules hanging just outside the shoulders. Kept short so
+        // proportions read naturally and the eye labels fit above the
+        // shoulders.
         path.addRoundedRect(
             in: CGRect(x: 0.16 * w, y: 0.24 * h, width: 0.10 * w, height: 0.28 * h),
             cornerSize: CGSize(width: 5, height: 5)
@@ -175,8 +161,7 @@ struct SilhouetteShape: Shape {
             cornerSize: CGSize(width: 5, height: 5)
         )
 
-        // Hands — ellipses at the bottom of each (shortened) arm. Same
-        // size as before, shifted up to follow the arm endpoints.
+        // Hands — ellipses at the wrist end of each arm.
         path.addEllipse(in: CGRect(
             x: 0.14 * w, y: 0.52 * h,
             width: 0.14 * w, height: 0.08 * h
@@ -186,9 +171,8 @@ struct SilhouetteShape: Shape {
             width: 0.14 * w, height: 0.08 * h
         ))
 
-        // Legs — capsules with a clear gap between them. Shortened
-        // (was 0.58→0.98) so the Back/Nrvs labels can sit beside the
-        // lower body without overlapping feet.
+        // Legs — capsules with a clear gap between them, stopped short so the
+        // Back/Nrvs labels can sit beside the lower body without overlap.
         path.addRoundedRect(
             in: CGRect(x: 0.36 * w, y: 0.58 * h, width: 0.12 * w, height: 0.32 * h),
             cornerSize: CGSize(width: 5, height: 5)
@@ -215,10 +199,8 @@ private struct PipAnchor: Identifiable {
 
     var id: BodyPart { part }
 
-    // Almost every pip is the standard 18pt — keeps the visual rhythm
-    // even. Neck is the exception (14pt) because the neck band itself
-    // is so narrow that a full-size pip would overflow into both the
-    // head ellipse and the shoulder line at once.
+    // Pips are 18pt for even visual rhythm; neck is 14pt because the narrow
+    // neck band would otherwise overflow into the head and shoulders.
     static let frontVisible: [PipAnchor] = [
         PipAnchor(part: .head,      x: 0.50, y: 0.10,  size: 18),
         PipAnchor(part: .neck,      x: 0.50, y: 0.20,  size: 14),
@@ -227,11 +209,11 @@ private struct PipAnchor: Identifiable {
         PipAnchor(part: .chest,     x: 0.50, y: 0.32,  size: 18),
         PipAnchor(part: .abdomen,   x: 0.50, y: 0.52,  size: 18),
 
-        // Arms — capsule centers shifted up with the shorter arm length.
+        // Arms — at the capsule centers.
         PipAnchor(part: .leftArm,   x: 0.21, y: 0.37,  size: 18),
         PipAnchor(part: .rightArm,  x: 0.79, y: 0.37,  size: 18),
 
-        // Hands sit at the wrist end of the (shortened) arms.
+        // Hands — at the wrist end of the arms.
         PipAnchor(part: .leftHand,  x: 0.21, y: 0.56,  size: 18),
         PipAnchor(part: .rightHand, x: 0.79, y: 0.56,  size: 18),
 
@@ -241,14 +223,10 @@ private struct PipAnchor: Identifiable {
     ]
 }
 
-/// Body parts that have no natural pip-on-the-silhouette position.
-/// Rendered as a labeled vertical pip+text stack in the dead space
-/// outside the silhouette — eyes above the shoulders, back/nerves
-/// below, beside the legs.
-///
-/// Labels are tuned for column-width balance: `L.Eye` / `R.Eye` for the
-/// upper pair and `Back` / `Nrvs` for the lower pair so each side reads
-/// at the same visual weight.
+/// Body parts with no natural pip-on-the-silhouette position. Rendered as a
+/// labeled pip+text stack in the dead space outside the silhouette — eyes
+/// above the shoulders, back/nerves below beside the legs. Labels (`L.Eye` /
+/// `R.Eye`, `Back` / `Nrvs`) are sized for column-width balance.
 private struct OffBodyAnchor: Identifiable {
     let part: BodyPart
     let label: String

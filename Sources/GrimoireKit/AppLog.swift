@@ -25,9 +25,8 @@ private final class AppLogger: @unchecked Sendable {
     private let logURL: URL
 
     /// Roll the log over once it passes this size. Keeps one previous
-    /// generation (`Grimoire.log.1`), so on-disk usage is bounded at
-    /// ~2x this rather than growing without limit (it had reached
-    /// ~96 MB before this existed).
+    /// generation (`Grimoire.log.1`), so on-disk usage is bounded at ~2x this
+    /// rather than growing without limit.
     private static let maxBytes: UInt64 = 5 * 1024 * 1024
 
     private static let timestamp: DateFormatter = {

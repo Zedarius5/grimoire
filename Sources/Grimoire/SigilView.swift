@@ -5,10 +5,6 @@ import GrimoireKit
 /// isn't connected. Per-character shimmer (chaotic, top-heavy intensity,
 /// per-cell hue/saturation drift) plus sparkle particles that emerge from
 /// the `@` glyphs themselves and drift upward.
-///
-/// Designed in `~/Documents/Repositories/SigilProto` and ported here once
-/// the look landed. Treat the prototype as the design source of truth —
-/// changes worth keeping should round-trip through it.
 struct SigilView: View {
     private let startDate = Date()
 
@@ -17,13 +13,10 @@ struct SigilView: View {
             GameTheme.background
 
             TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-                // Clamp to non-negative — during AppKit window-state
-                // restoration at launch, SwiftUI can sample the timeline
-                // before `startDate` is captured, giving a tiny negative
-                // `t`. That cascades to a negative `cycleNum` in
-                // `drawParticle`, then a negative `spawnIdx`, then an
-                // out-of-bounds array access. Pinning to ≥ 0 fixes all
-                // of it at the source.
+                // Clamp to non-negative — the timeline can be sampled
+                // before `startDate` is captured (window-state restore at
+                // launch), and a negative `t` cascades into a negative
+                // `spawnIdx` and an out-of-bounds array access.
                 let t = max(0, timeline.date.timeIntervalSince(startDate))
 
                 VStack(spacing: 22) {
@@ -163,9 +156,8 @@ struct SigilView: View {
         let cycleNum = Int(floor(totalT / particleLifetime))
 
         // Swift's `%` can return a negative remainder for a negative
-        // dividend. Normalise into `[0, count)` defensively so any future
-        // negative `cycleNum` (e.g., a renderer-timing edge case) won't
-        // index out of bounds.
+        // dividend; normalise into `[0, count)` so a negative `cycleNum`
+        // can't index out of bounds.
         let count = atPositions.count
         let rawIdx = (i * 31) + (cycleNum * 17)
         let spawnIdx = ((rawIdx % count) + count) % count
@@ -218,10 +210,9 @@ struct SigilView: View {
     private func statusText(t: Double) -> some View {
         let dotCount = Int(t * 1.5) % 4
         let dots = String(repeating: ".", count: dotCount)
-        // "Awaiting connection" stays anchored in place; the dots animate
-        // in a fixed-width container after it. Without this split, the
-        // VStack would re-centre the entire string each time a dot is
-        // added and the text would shimmy left.
+        // "Awaiting connection" stays anchored; the dots animate in a
+        // fixed-width container after it so the VStack doesn't re-centre
+        // (and shimmy) the whole string as dots are added.
         return HStack(spacing: 0) {
             Text("Awaiting connection")
                 .font(.system(size: 13, design: .monospaced))

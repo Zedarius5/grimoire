@@ -1,18 +1,15 @@
 import Foundation
 import Darwin
 
-/// Captures live signals useful for diagnosing main-thread wedges that the
-/// existing reconcile/watchdog logs can't see — namely "how long has the
-/// main thread been unresponsive" and "which SwiftUI panes are churning."
+/// Captures live signals for diagnosing main-thread wedges: how long the main
+/// thread has been unresponsive, and which SwiftUI panes are churning.
 ///
-/// The heartbeat runs on a private background queue, so it keeps reporting
-/// even when the main thread is fully wedged in a SwiftUI layout loop —
-/// the situation where every existing log site is starved.
+/// The heartbeat runs on a private background queue so it keeps reporting even
+/// when the main thread is fully wedged in a SwiftUI layout loop.
 ///
-/// In addition to the original log-when-interesting path, this snapshots a
-/// per-second `PerfSnapshot` accessible via `latestSnapshot()` so an
-/// in-app debug window can show live counters without re-instrumenting
-/// every call site.
+/// Besides the log-when-interesting path, it snapshots a per-second
+/// `PerfSnapshot` (via `latestSnapshot()`) so an in-app debug window can show
+/// live counters.
 public final class Diagnostics: @unchecked Sendable {
 
     public static let shared = Diagnostics()
@@ -131,18 +128,11 @@ public final class Diagnostics: @unchecked Sendable {
 
         // Snapshot and reset interval counters.
         lock.lock()
-        // Display value: the most recent measured dispatch-to-run
-        // latency. Single-digit ms under normal operation. Bounded
-        // above by the heartbeat interval -- if main is wedged
-        // longer than that, the dispatched closure hasn't run yet
-        // and lastTickLatencyMs reflects whatever the PREVIOUS tick
-        // measured (stale).
-        //
-        // To surface in-progress wedges past the interval, add the
-        // overage of "time since last completed tick" beyond one
-        // interval. Steady state: timeSinceLastComplete ≈ interval,
-        // so overage ≈ 0 and mainLag = latency. Wedge in progress:
-        // overage grows without bound and dominates.
+        // mainLag = recent dispatch-to-run latency, plus an overage term so
+        // in-progress wedges past the interval still surface. lastTickLatencyMs
+        // alone goes stale during a wedge (the dispatched closure hasn't run),
+        // so we add "time since last completed tick" beyond one interval:
+        // steady state that overage is ~0; during a wedge it grows and dominates.
         let nowAbs = CFAbsoluteTimeGetCurrent()
         let intervalMs = Self.interval * 1000
         let timeSinceLastTickMs = (nowAbs - lastTickCompletedAt) * 1000
@@ -186,10 +176,9 @@ public final class Diagnostics: @unchecked Sendable {
         latestPerfSnapshot = snapshot
         lock.unlock()
 
-        // Steady state: mainLag tiny, no pane churn — skip log. Anything
-        // interesting still gets a line. With the new latency-based
-        // measurement, mainLag in normal operation is single-digit ms,
-        // so a 100ms threshold reliably catches real backpressure.
+        // Steady state (tiny mainLag, no pane churn) skips the log; anything
+        // interesting still gets a line. Normal mainLag is single-digit ms, so
+        // the 100ms threshold reliably catches real backpressure.
         let topEvals = evalSnapshot
             .sorted { $0.value > $1.value }
             .prefix(6)

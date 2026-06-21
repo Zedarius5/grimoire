@@ -11,9 +11,8 @@ public enum HighlightProcessor {
         apply(rules, to: line, useGate: true)
     }
 
-    /// `useGate` exists so the equivalence test can compare the
-    /// Aho-Corasick-pruned path against the brute-force (all-rules) path
-    /// and assert identical output. Production always gates.
+    /// `useGate` lets the equivalence test compare the Aho-Corasick-pruned
+    /// path against the brute-force all-rules path. Production always gates.
     static func apply(_ rules: [Highlight], to line: RenderedLine, useGate: Bool) -> RenderedLine {
         let allActive = rules.filter { $0.enabled && !$0.text.isEmpty }
         guard !allActive.isEmpty, !line.runs.isEmpty else { return line }
@@ -22,35 +21,24 @@ public enum HighlightProcessor {
         let count = plain.length
         guard count > 0 else { return line }
 
-        // PRE-FILTER: prune to the rules that could possibly match this
-        // line via a single Aho-Corasick pass, instead of substring-
-        // scanning all (potentially thousands of) rules per line. The
-        // gate over-includes (a literal rule is a candidate iff its text
-        // occurs case-insensitively; regex / non-ASCII rules are always
-        // candidates), so the exact matcher below still does the real
-        // work and the output is identical to scanning every rule --
-        // proven by HighlightProcessorGateTests. Candidates keep their
-        // original relative order so color last-write-wins is preserved.
+        // PRE-FILTER: one Aho-Corasick pass prunes to the rules that could
+        // match this line, instead of substring-scanning every rule. The gate
+        // over-includes (regex/non-ASCII rules always pass), so output is
+        // identical to scanning all rules. Candidates keep their relative
+        // order, preserving color last-write-wins.
         let active = useGate ? candidateRules(allActive, line: line.plainText) : allActive
         guard !active.isEmpty else { return line }
 
-        // Fast path: skip the expensive per-character override allocation
-        // and run-walk below when no rule even *occurs* in this line.
-        // Most lines in a typical session don't match any user-defined
-        // rule, so this saves the bulk of the highlight-rebuild cost
-        // (observed: ~770ms → expected ~80ms for ~1k lines at 5 rules).
-        //
-        // The check ignores `wholeWord`: a `contains` is much cheaper
-        // than the full word-boundary test, so we conservatively
-        // over-include and let the slow path correctly reject any
-        // "test" inside "testing" cases. Never under-includes.
+        // Fast path: skip the per-character override allocation and run-walk
+        // below when no rule even occurs in this line (most lines match
+        // nothing). The check ignores `wholeWord` (a cheap `contains`),
+        // over-including and letting the slow path reject partial-word hits;
+        // it never under-includes.
         var hasMatch = false
         for rule in active {
             if rule.usesPattern {
-                // Regex rules participate in the fast-path too -- one
-                // cached-regex check per rule against the line. ~1µs
-                // per call, dwarfed by the slow-path savings on lines
-                // with no matches.
+                // Regex rules participate in the fast path too: one
+                // cached-regex check per rule against the line.
                 if let regex = compiledRegex(for: rule),
                    regex.firstMatch(in: line.plainText, range: NSRange(location: 0, length: count)) != nil {
                     hasMatch = true
@@ -225,14 +213,10 @@ public enum HighlightProcessor {
         return m
     }
 
-    /// Compile-once cache. Key includes the case-sensitivity flag so
-    /// identical patterns with different casing don't collide.
-    /// NSCache is documented as thread-safe (callers don't need locks
-    /// around `object(forKey:)` / `setObject(_:forKey:)`), but Swift 6
-    /// can't see that, so we mark this `nonisolated(unsafe)` to opt out
-    /// of the strict-concurrency check on the static. Entries get
-    /// evicted under memory pressure, which is fine because the
-    /// shorthand-to-regex compilation is cheap.
+    /// Compile-once cache. Key includes the case-sensitivity flag so identical
+    /// patterns with different casing don't collide. NSCache is thread-safe but
+    /// Swift 6 can't prove it, hence `nonisolated(unsafe)`. Memory-pressure
+    /// eviction is fine since recompiling is cheap.
     nonisolated(unsafe) private static let regexCache: NSCache<NSString, NSRegularExpression> = {
         let c = NSCache<NSString, NSRegularExpression>()
         c.countLimit = 512
@@ -265,13 +249,11 @@ public enum HighlightProcessor {
 
     // MARK: - Aho-Corasick pruning gate
 
-    /// A built gate for one rule set: the automaton over ASCII literal
-    /// needles (keyed by their index in `active`), plus the indices of
-    /// rules that bypass the gate. Regex rules bypass (the automaton is
-    /// literal-only); so do literal rules with non-ASCII text, where
-    /// Swift vs Foundation case-folding could in principle diverge and a
-    /// pruned rule would be a correctness bug -- ungating them keeps the
-    /// gate's "never drop a possible match" invariant airtight.
+    /// A built gate for one rule set: the automaton over ASCII literal needles
+    /// (keyed by index in `active`), plus the indices of rules that bypass it.
+    /// Regex rules bypass (the automaton is literal-only), as do non-ASCII
+    /// literals, where Swift vs Foundation case-folding could diverge; ungating
+    /// them keeps the "never drop a possible match" invariant airtight.
     private struct Gate {
         let automaton: AhoCorasick
         let ungatedIndices: [Int]
@@ -281,13 +263,11 @@ public enum HighlightProcessor {
     nonisolated(unsafe) private static var cachedGateKey: Int = 0
     private static let gateLock = NSLock()
 
-    /// Subset of `active` that could possibly match `line`, in the same
-    /// relative order (so the exact matcher's last-write-wins color
-    /// precedence is unchanged). A literal rule is included iff its text
-    /// occurs case-insensitively in the line; ungated rules are always
-    /// included. This is a superset of the rules that actually match, so
-    /// running the exact matcher over it yields identical output to
-    /// running over every rule.
+    /// Subset of `active` that could match `line`, in the same relative order
+    /// (preserving last-write-wins color precedence). A literal rule is included
+    /// iff its text occurs case-insensitively; ungated rules always are. This is
+    /// a superset of the actually-matching rules, so the exact matcher yields
+    /// identical output to scanning every rule.
     static func candidateRules(_ active: [Highlight], line: String) -> [Highlight] {
         let gate = gateFor(active)
         var idx = gate.automaton.search(line.lowercased())
@@ -296,11 +276,10 @@ public enum HighlightProcessor {
         return idx.sorted().map { active[$0] }
     }
 
-    /// Builds (or returns a cached) gate for `active`. Keyed by a content
-    /// hash of the rules' text + pattern flag, so the automaton is rebuilt
-    /// only when the rule set actually changes -- the per-line cost is
-    /// then one hash + one O(lineLength) search, not one substring scan
-    /// per rule.
+    /// Builds (or returns a cached) gate for `active`. Keyed by a content hash
+    /// of the rules' text + pattern flag, so the automaton is rebuilt only when
+    /// the rule set changes; the per-line cost is then one hash + one
+    /// O(lineLength) search rather than a substring scan per rule.
     private static func gateFor(_ active: [Highlight]) -> Gate {
         var hasher = Hasher()
         for r in active {
@@ -329,16 +308,10 @@ public enum HighlightProcessor {
         return gate
     }
 
-    /// Returns the exact substring of `text` that `rule` matched, or
-    /// nil if there's no match. The notification scanner uses this
-    /// for the body field so the user sees what ACTUALLY hit (not
-    /// the rule's match text, which for a regex is the pattern and
-    /// for a case-insensitive literal might differ in case from
-    /// what's on screen).
-    ///
-    /// Special case: `entireLine` rules return the whole `text`,
-    /// since those rules conceptually highlight the entire line, not
-    /// just the matching span.
+    /// Returns the exact substring of `text` that `rule` matched, or nil. The
+    /// notification body uses this so the user sees what actually hit, not the
+    /// rule's pattern (or a literal that differs in case from what's on screen).
+    /// `entireLine` rules return the whole `text`.
     public static func matchedText(_ rule: Highlight, in text: String) -> String? {
         guard rule.enabled, !rule.text.isEmpty, !text.isEmpty else { return nil }
         if rule.entireLine, matches(rule, in: text) {
@@ -373,12 +346,10 @@ public enum HighlightProcessor {
         return nil
     }
 
-    /// True iff `rule` matches anywhere in `text`. Same matching
-    /// semantics as `apply(_:to:)` (regex if usesPattern, literal
-    /// otherwise; honors caseSensitive + wholeWord). Used by the
-    /// notification scanner to check "did any notify-enabled rule
-    /// match this line?" without paying for the full per-character
-    /// styling rebuild that `apply` does.
+    /// True iff `rule` matches anywhere in `text`, with the same semantics as
+    /// `apply(_:to:)` (regex/literal, caseSensitive, wholeWord). The
+    /// notification scanner uses this to check for a match without the full
+    /// per-character styling rebuild.
     public static func matches(_ rule: Highlight, in text: String) -> Bool {
         guard rule.enabled, !rule.text.isEmpty, !text.isEmpty else { return false }
         if rule.usesPattern {

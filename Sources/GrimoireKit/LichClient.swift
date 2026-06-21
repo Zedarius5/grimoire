@@ -4,10 +4,8 @@ import Network
 /// A TCP client that streams the GemStone XML protocol from a Lich instance.
 ///
 /// Reads and parses on a dedicated background queue so the main thread (UI)
-/// never gates network draining. Fast scripts like go2 produce bursts of
-/// traffic — if Grimoire is slow to consume from the socket, Lich's writes
-/// back-pressure and that delays in-game commands (visible as type-ahead
-/// errors).
+/// never gates network draining. If Grimoire is slow to consume from the
+/// socket, Lich's writes back-pressure and that delays in-game commands.
 public final class LichClient: ObservableObject, @unchecked Sendable {
 
     public enum Status: Equatable, Sendable {
@@ -30,9 +28,9 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
     @Published public private(set) var linesByStream: [String: [RenderedLine]] = [:]
     /// Monotonic per-stream counter of total lines ever appended (ignoring
     /// cap-trimming). Lets views detect "new content arrived" even when
-    /// `linesByStream[id].count` is capped and unchanged — without it,
-    /// at-cap streams visually freeze because `lines.count` equality
-    /// short-circuits SwiftUI's body re-evaluation.
+    /// `linesByStream[id].count` is capped and unchanged — otherwise at-cap
+    /// streams freeze because `lines.count` equality short-circuits SwiftUI's
+    /// body re-evaluation.
     @Published public private(set) var streamRevisions: [String: Int] = [:]
     @Published public private(set) var endpointLabel: String = ""
     @Published public private(set) var gameState: GameState = GameState()
@@ -54,9 +52,8 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
 
     /// Wall-clock of the last successful append to `linesByStream["main"]`
     /// and the last "any other activity" tick. The watchdog uses the gap to
-    /// detect the "story window stuck" bug — protocol activity continues
-    /// (dialogs, side streams, prompts) but main-stream text is silently
-    /// being routed elsewhere by a wedged streamStack/invisibleStack.
+    /// detect a wedged streamStack/invisibleStack: protocol activity continues
+    /// (dialogs, side streams, prompts) but main-stream text stops arriving.
     private var lastMainAppendAt: Date = Date()
     private var lastOtherActivityAt: Date = Date()
 
@@ -101,8 +98,7 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
     )
 
     public init() {
-        // First reference starts the background heartbeat that reports
-        // main-thread responsiveness even when main is wedged.
+        // First reference starts the background diagnostics heartbeat.
         _ = Diagnostics.shared
     }
 
@@ -138,27 +134,19 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         gameState = GameState()
         dialogs = [:]
         self.mode = mode
-        // Invalidate any pending render-state clear scheduled by a
-        // previous disconnect. With `renderedStateClearDelay` at 4.5s,
-        // it's easy to start a new session inside that window — and
-        // without this bump, the stale clear fires after the new
-        // session's first lines have arrived and wipes them.
+        // Invalidate any pending render-state clear from a previous disconnect.
+        // A new session can start inside the `renderedStateClearDelay` window;
+        // without this bump the stale clear fires after the new session's first
+        // lines have arrived and wipes them.
         disconnectGeneration &+= 1
 
         workQueue.async { [weak self] in
             guard let self else { return }
-            // Disown the previous connection's stateUpdateHandler BEFORE
-            // cancelling so its deferred `.cancelled` (or any late `.failed`)
-            // can't mutate this client's state. Without this detach, an old
-            // failed-connection's late `.cancelled` arriving after a fresh
-            // `connect()` would (1) revert status `.connecting` ->
-            // `.disconnected` and (2) call `scheduleRenderedStateClear()`,
-            // which bumps `disconnectGeneration` AFTER `connect()`'s own
-            // bump — so the pending clear's gen matches the current gen and
-            // fires ~4.5s into the new session, wiping the initial autostart
-            // scroll. Hits hardest on the launch-then-poll-connect path
-            // where the first few connect attempts fail until Lich's
-            // frontend port is bound.
+            // Detach the old connection's handler before cancelling, so its
+            // late `.cancelled`/`.failed` can't revert this client's status or
+            // schedule a stale render-clear that wipes the new session's first
+            // lines. (The render-clear races because `scheduleRenderedStateClear`
+            // would bump `disconnectGeneration` after `connect()`'s own bump.)
             if let old = self.connection {
                 old.stateUpdateHandler = nil
                 old.cancel()
@@ -200,8 +188,7 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         workQueue.async { [weak self] in
             // Same handler-detach rationale as `connect()`: prevent the
             // connection's eventual `.cancelled` from firing a second
-            // render-clear (or, if the user reconnects fast enough,
-            // tearing down the new `.connecting` state).
+            // render-clear, or tearing down a fast reconnect's `.connecting`.
             if let conn = self?.connection {
                 conn.stateUpdateHandler = nil
                 conn.cancel()
@@ -217,8 +204,7 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
     /// handshake.
     private func clearRenderedState() {
         // Breadcrumb so it's obvious in the log if a clear ever fires
-        // unexpectedly (e.g., during an active session — which is how
-        // the "first few seconds of autostart cut off" bug presented).
+        // unexpectedly during an active session.
         appLog(
             "LichClient",
             "clearRenderedState firing (gen=\(disconnectGeneration), mainLines=\(mainLines.count))",
@@ -230,18 +216,14 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         dialogs = [:]
     }
 
-    /// Defer the render-state clear until after the UI has had time to
-    /// fade content out gracefully. Without the delay the views would
-    /// snap to their empty/default appearance (e.g., HandsStrip showing
-    /// "Empty / Empty / None", vitals reading 0/0) and *then* fade out
-    /// — the user would see the empty state briefly. With the delay the
-    /// last-seen content stays put during the fade.
+    /// Defer the render-state clear until after the UI has faded content out,
+    /// so the last-seen content stays put during the fade instead of snapping
+    /// to the empty/default appearance first.
     ///
-    /// The constant here covers ContentView's disconnect grace period
-    /// (3s "stay on last frame") plus the sigil cross-fade (1.25s),
-    /// with a small margin so state survives slightly longer than the
-    /// fade — otherwise the GameView would empty out mid-fade. Keep
-    /// in sync with `ContentView.disconnectFadeDelay`.
+    /// The constant covers ContentView's disconnect grace period (3s "stay on
+    /// last frame") plus the sigil cross-fade (1.25s), with a margin so state
+    /// outlasts the fade rather than emptying mid-fade. Keep in sync with
+    /// `ContentView.disconnectFadeDelay`.
     private static let renderedStateClearDelay: TimeInterval = 4.5
 
     /// Increments on each disconnect so a quick reconnect cancels any
@@ -311,15 +293,13 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
 
     // MARK: - Connection lifecycle (main thread)
 
-    /// Fired once when an *established* connection drops (server-side
-    /// `QUIT`, network kill, user-clicked Disconnect button — anything
-    /// that takes us out of `.connected`). Specifically does NOT fire
-    /// on `.connecting → .failed` (initial connect refused) because
-    /// that's the path the user takes when Lich is still booting and
-    /// hasn't bound its frontend port yet; killing Lich there would
-    /// guarantee an unrecoverable refuse loop. App delegate uses this
-    /// hook to SIGTERM the spawned Lich child after the game-side has
-    /// closed cleanly.
+    /// Fired once when an *established* connection drops (server-side `QUIT`,
+    /// network kill, Disconnect button — anything that leaves `.connected`).
+    /// Deliberately does NOT fire on `.connecting → .failed` (initial connect
+    /// refused), because that's expected while Lich is still booting and hasn't
+    /// bound its frontend port; killing Lich there would cause an unrecoverable
+    /// refuse loop. App delegate uses this hook to SIGTERM the spawned Lich
+    /// child after the game-side has closed cleanly.
     public var onDisconnect: (() -> Void)?
 
     private func handleState(_ state: NWConnection.State) {
@@ -346,9 +326,8 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         default:
             break
         }
-        // Only fire on a *connected* -> inactive edge. The
-        // `connecting -> failed` path stays silent so the user can
-        // retry while Lich is still booting.
+        // Only fire on a *connected* -> inactive edge; `connecting -> failed`
+        // stays silent so the user can retry while Lich is still booting.
         if wasConnected, !isActive {
             onDisconnect?()
         }
@@ -363,7 +342,7 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
                   completion: .contentProcessed { _ in })
         conn.send(content: Data((clientString + "\n").utf8),
                   completion: .contentProcessed { _ in })
-        // Two "ready" pings with the same 0.3s gap Lich uses for its own login.
+        // Two "ready" pings, 0.3s apart (matching Lich's own login timing).
         workQueue.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.connection?.send(content: Data("<c>\n".utf8),
                                    completion: .contentProcessed { _ in })
@@ -488,18 +467,16 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
                     cb(menu)
                 }
             }
-            // Open any server-pushed browser URLs (GOAL, SIMUCOIN STORE,
-            // play.net redirects, etc.). The handler is set by the UI layer
-            // — if it isn't, the URLs are silently dropped (intentional;
-            // means a headless or unit-test client doesn't try to open
-            // a browser).
+            // Open any server-pushed browser URLs. The handler is set by the
+            // UI layer; if unset, URLs are silently dropped so a headless or
+            // unit-test client doesn't try to open a browser.
             if !launchURLsSnapshot.isEmpty, let open = self.onLaunchURL {
                 for url in launchURLsSnapshot { open(url) }
             }
 
             // Log slow batches or any batch that sat in the main queue for
-            // more than ~50ms — backpressure on main is the leading
-            // indicator of the SwiftUI layout wedge we're hunting.
+            // more than ~50ms — backpressure on main is the leading indicator
+            // of a SwiftUI layout wedge.
             let runtimeMs = Int((CFAbsoluteTimeGetCurrent() - runStart) * 1000)
             Diagnostics.shared.recordLichBatch(
                 lines: batchLineCount,
@@ -596,9 +573,9 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         if mainGrew { lastMainAppendAt = now }
         if otherGrew || mainGrew { lastOtherActivityAt = now }
 
-        // If 10s of "other things are flowing but main isn't", assume the
-        // renderer wedged on a stuck pushStream / invisibleStack and force
-        // a reset. The next bit of incoming text should land in main again.
+        // If 10s of "other things flowing but main isn't", assume the renderer
+        // wedged on a stuck pushStream/invisibleStack and force a reset so the
+        // next incoming text lands in main again.
         let mainSilent = now.timeIntervalSince(lastMainAppendAt)
         let otherActive = now.timeIntervalSince(lastOtherActivityAt)
         if mainSilent > 10, otherActive < 2 {
@@ -610,23 +587,18 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// True for any of the server's bare-prompt variants — the alive
-    /// `>`, plus state-modified prompts like `DEAD>`, `H>` (hidden),
-    /// `!>` (stunned), `R>` (roundtime). We collapse consecutive
-    /// prompt-only lines but keep prompt-styled lines that carry the
-    /// user's own command (`echoLocal` emits `"> smile"` etc.) — those
-    /// contain a space so they're excluded by the no-space guard below.
-    ///
-    /// Bug history: previously this only matched bare `">"`. Scripts
-    /// that squelch their command output still cause the server to
-    /// emit a prompt afterward, so squelched scripts in dead/hidden/etc.
-    /// state would pile up dozens of identical `DEAD>` / `H>` lines in
-    /// the story feed.
+    /// True for any of the server's bare-prompt variants — the alive `>`, plus
+    /// state-modified prompts like `DEAD>`, `H>` (hidden), `!>` (stunned),
+    /// `R>` (roundtime). Matching all variants (not just bare `>`) keeps
+    /// squelched scripts in dead/hidden state from piling up identical
+    /// `DEAD>`/`H>` lines. We collapse consecutive prompt-only lines but keep
+    /// prompt-styled lines that carry the user's own command (`echoLocal`
+    /// emits `"> smile"`) — those contain a space, excluded by the guard below.
     private static func isPromptOnly(_ line: RenderedLine) -> Bool {
         guard !line.runs.isEmpty, line.runs.allSatisfy({ $0.style.isPrompt }) else { return false }
         let joined = line.runs.map(\.text).joined().trimmingCharacters(in: .whitespaces)
-        // Short, no spaces, ends with `>`. 8 chars covers every prompt
-        // variant I've seen in GS4; bump if a longer one surfaces.
+        // Short, no spaces, ends with `>`. 8 chars covers every known GS4
+        // prompt variant; bump if a longer one surfaces.
         return joined.hasSuffix(">")
             && !joined.contains(" ")
             && joined.count <= 8

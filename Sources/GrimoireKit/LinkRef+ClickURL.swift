@@ -24,10 +24,9 @@ public extension LinkRef {
     /// actionable info.
     ///
     /// `fallbackText` is the run's visible text. SF/Wrayth's
-    /// `<d>VERB</d>` convention (no `cmd` attribute, no `exist`/`noun`)
-    /// means "clicking sends the visible text as a command" -- e.g.
-    /// `<d>ASCENSION LEARN CONFIRM</d>` clicked = sending "ASCENSION
-    /// LEARN CONFIRM". Without the fallback those clicks were dead.
+    /// `<d>VERB</d>` convention (no `cmd`/`exist`/`noun`) means clicking
+    /// sends the visible text as a command -- e.g. `<d>ASCENSION LEARN
+    /// CONFIRM</d>` sends "ASCENSION LEARN CONFIRM".
     func clickURL(fallbackText: String? = nil) -> URL? {
         var components = URLComponents()
         components.scheme = "grimoire"

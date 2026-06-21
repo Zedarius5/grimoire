@@ -11,10 +11,9 @@ struct GrimoireApp: App {
     @StateObject private var macros = MacroEngine()
     @StateObject private var highlights = HighlightStore()
     @StateObject private var spellPresets = SpellPresetStore()
-    // Hoisted from ContentView so the AppDelegate can SIGTERM the
-    // spawned Lich child on Cmd-Q / red-button close (otherwise it
-    // orphans, keeping the character "in the world" past logout —
-    // animate refresh stalls, sustains tick down).
+    // Hoisted from ContentView so the AppDelegate can SIGTERM the spawned Lich
+    // child on Cmd-Q / red-button close; otherwise it orphans and keeps the
+    // character in the world past logout.
     @StateObject private var lich = LichProcess()
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -28,15 +27,13 @@ struct GrimoireApp: App {
                 .environmentObject(highlights)
                 .environmentObject(spellPresets)
                 .onAppear {
-                    // Hand the delegate the references it needs. Weak
-                    // refs in the delegate, so retain stays on the
+                    // Hand the delegate weak refs; retain stays on the
                     // @StateObjects up here.
                     appDelegate.client = client
                     appDelegate.lich = lich
-                    // Kill orphan Lich whenever the game-server-side
-                    // socket closes (in-game `QUIT`, network drop,
-                    // explicit Disconnect button). Idempotent — the
-                    // Cmd-Q cleanup calls `stop()` again, that's fine.
+                    // Kill orphan Lich whenever the game-server socket closes
+                    // (in-game `QUIT`, network drop, Disconnect). Idempotent —
+                    // the Cmd-Q cleanup may call `stop()` again.
                     client.onDisconnect = { [weak lich] in lich?.stop() }
                 }
         }
@@ -89,9 +86,8 @@ struct GrimoireApp: App {
     }
 }
 
-/// Menu-bar item that opens the live perf dashboard. Useful for
-/// spotting main-thread stalls / over-rendering panes during normal
-/// gameplay without dropping to Console.app + log filtering.
+/// Menu-bar item that opens the live perf dashboard for spotting main-thread
+/// stalls / over-rendering panes during normal gameplay.
 private struct OpenPerfDebugMenuItem: View {
     @Environment(\.openWindow) private var openWindow
 
@@ -103,17 +99,15 @@ private struct OpenPerfDebugMenuItem: View {
     }
 }
 
-/// Owns the graceful-shutdown sequence so Cmd-Q, File → Quit, and the
-/// red close button all converge on the same cleanup:
+/// Owns the graceful-shutdown sequence so Cmd-Q, File → Quit, and the red
+/// close button all converge on the same cleanup:
 ///   1. Send `quit` to Lich/GS if still connected (clean in-game logout).
 ///   2. Wait briefly (cap 3s) for the server to close the socket.
 ///   3. SIGTERM the spawned Lich child so it doesn't orphan.
 ///   4. Reply to AppKit so the app actually exits.
 ///
-/// Without this, closing Grimoire leaves `lich.rbw` running with the
-/// game session live — the character lingers as linkdead, sustains
-/// tick down, Animate Dead pets eventually die because the refresh
-/// script's frontend is gone but the character is still in the world.
+/// Without this, closing Grimoire leaves `lich.rbw` running with the game
+/// session live, so the character lingers in the world past logout.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var client: LichClient?
@@ -176,10 +170,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.reply(toApplicationShouldTerminate: true)
             return
         }
-        // Give Lich the window it needs to save script settings and let
-        // scripts wind down after SIGTERM (Doug's requested behavior),
-        // and reply the instant it's actually gone. The 3s ceiling is a
-        // backstop; a clean Lich exit is typically well under a second.
+        // Give Lich time to save script settings and let scripts wind down
+        // after SIGTERM, and reply the instant it's actually gone. The 3s
+        // ceiling is a backstop; a clean Lich exit is usually under a second.
         lich.terminateAndWait(timeout: 3) {
             NSApp.reply(toApplicationShouldTerminate: true)
         }

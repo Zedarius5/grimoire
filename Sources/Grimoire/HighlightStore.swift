@@ -12,11 +12,9 @@ final class HighlightStore: ObservableObject {
     }
 
     private var saveTask: Task<Void, Never>?
-    /// Debounce window for `UserDefaults.set` + the
-    /// `NSUserDefaultsDidChange` notification fan-out. With ~900
-    /// rules the encoded blob is ~175 KB; without debouncing,
-    /// per-keystroke edits in the editor stall the UI because every
-    /// keystroke triggers a synchronous save + notification post.
+    /// Debounce window for the `UserDefaults.set` + `NSUserDefaultsDidChange`
+    /// fan-out. The encoded blob is large (~175 KB at ~900 rules), so
+    /// per-keystroke synchronous saves would stall the UI without debouncing.
     private static let saveDelay: TimeInterval = 0.5
 
     init() {
@@ -42,11 +40,10 @@ final class HighlightStore: ObservableObject {
     var highlights: [Highlight] { config.highlights }
     var groups: [HighlightGroup] { config.groups }
 
-    /// Rule list with group-level fg/bg/traits/enabled pre-merged. The
-    /// renderer (StoryTextView env, DialogPane) consumes this so
-    /// HighlightProcessor itself stays group-agnostic. Implementation
-    /// lives in `HighlightResolver` so it's testable without bringing
-    /// in HighlightStore's UI dependencies.
+    /// Rule list with group-level fg/bg/traits/enabled pre-merged, so the
+    /// renderer consumes resolved rules and HighlightProcessor stays
+    /// group-agnostic. Implemented in `HighlightResolver` to keep it testable
+    /// without HighlightStore's UI dependencies.
     var effectiveHighlights: [Highlight] {
         HighlightResolver.resolve(config.highlights, groups: config.groups)
     }
@@ -88,10 +85,9 @@ final class HighlightStore: ObservableObject {
         config.groups[idx] = group
     }
 
-    /// Removes the group and detaches all its member rules (sets their
-    /// `groupId` back to nil so they keep their own styling -- we never
-    /// silently delete user rules). Returns how many rules were
-    /// detached so a caller can confirm if it wants to.
+    /// Removes the group and detaches its member rules (clears their `groupId`
+    /// so they keep their own styling; member rules are never deleted).
+    /// Returns the number of rules detached.
     @discardableResult
     func removeGroup(id: UUID) -> Int {
         var detached = 0

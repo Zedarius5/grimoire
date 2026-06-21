@@ -16,11 +16,8 @@ struct ContentView: View {
     // Presets editor's active-bars picker) can share the same live
     // state. Ownership lives in GrimoireApp via @StateObject.
     @EnvironmentObject private var client: LichClient
-    // Hoisted to GrimoireApp so the AppDelegate can SIGTERM it on
-    // app quit. Lifetime is now app-scoped instead of view-scoped;
-    // this is functionally identical for ContentView (it's the only
-    // window holding a reference) except that the @StateObject's
-    // creation/destruction no longer races with quit.
+    // Hoisted to GrimoireApp (app-scoped) so the AppDelegate can SIGTERM it on
+    // app quit and the @StateObject's lifetime doesn't race with quit.
     @EnvironmentObject private var lich: LichProcess
     @EnvironmentObject private var macros: MacroEngine
     @EnvironmentObject private var highlights: HighlightStore
@@ -48,12 +45,10 @@ struct ContentView: View {
     @State private var didAutoOpenConnect: Bool = false
     @State private var showingDiscoveredPanes: Bool = false
 
-    /// Lags `client.isActive` by `disconnectFadeDelay` on the
-    /// true -> false transition. Drives the swap between the live
-    /// game feed and the GRIMOIRE sigil so a brief network blip
-    /// (or the QUIT roundtrip) doesn't slam the user back to the
-    /// "waiting" screen instantly. Transitions back to true the
-    /// moment we reconnect.
+    /// Lags `client.isActive` by `disconnectFadeDelay` on the true -> false
+    /// transition. Drives the swap between the live game feed and the GRIMOIRE
+    /// sigil so a brief network blip (or the QUIT roundtrip) doesn't slam the
+    /// user back to the "waiting" screen. Flips back to true on reconnect.
     @State private var uiShowsActiveSession: Bool = false
     @State private var deactivationTask: Task<Void, Never>? = nil
     /// Seconds we hold on the last-seen game frame after the
@@ -660,15 +655,12 @@ struct ContentView: View {
         VStack(spacing: 0) {
             RoomHeader(state: client.gameState)
             Group {
-                // When connected, show the live story feed. The empty-state
-                // placeholder is OVERLAID via ZStack rather than swapped in
-                // via an if/else branch -- swapping unmounts GameView, which
-                // destroys the underlying NSTextView, and the next time the
-                // feed has content we mount a fresh NSTextView at scroll
-                // y=0. Any brief moment mainLines goes empty (a reconnect
-                // wipe, a stale-clear race) was visibly "story window jumps
-                // to the top" before this -- the overlay keeps the NSView
-                // alive across the transition.
+                // The empty-state placeholder is OVERLAID via ZStack rather
+                // than swapped via if/else: swapping unmounts GameView,
+                // destroying the underlying NSTextView, so the next content
+                // would mount a fresh NSTextView at scroll y=0. The overlay
+                // keeps the NSView alive across brief empty moments (reconnect
+                // wipe, stale-clear race) so the story feed doesn't jump to top.
                 if uiShowsActiveSession {
                     ZStack {
                         GameView(
@@ -776,11 +768,10 @@ struct ContentView: View {
         }
     }
 
-    /// AppKit-side drop handler. Captures the target's *original* index
-    /// before removing the source so the insertion lands at the right slot
-    /// regardless of drag direction. (Re-finding the target after the
-    /// removal would silently shift it down by 1 for forward moves, and the
-    /// drop would visibly snap back to the source's starting slot.)
+    /// AppKit-side drop handler. Captures the target's *original* index before
+    /// removing the source so the insertion lands at the right slot regardless
+    /// of drag direction; re-finding the target after removal would shift it by
+    /// one for forward moves and snap the drop back to the source's old slot.
     private func applyPaneDrop(sourceId: String, target: PaneSpec) -> Bool {
         guard sourceId != target.id else { return true }
         guard let srcIdx = panes.firstIndex(where: { $0.id == sourceId }),
@@ -789,11 +780,8 @@ struct ContentView: View {
 
         panes[srcIdx].region = target.region
         let moved = panes.remove(at: srcIdx)
-        // Forward moves (src<dst): inserting at the original dst lands the
-        // source AT the target's old slot, with the target sliding back.
-        // Backward moves (src>dst): inserting at dst puts the source at
-        // the target's slot, with the target sliding forward. Both cases
-        // resolve to the same insertion point.
+        // Inserting at the original dst index lands the source at the target's
+        // old slot for both forward and backward moves.
         let insertAt = min(originalDstIdx, panes.count)
         panes.insert(moved, at: insertAt)
         return true
@@ -801,10 +789,9 @@ struct ContentView: View {
 
     @ViewBuilder
     private func paneContent(for spec: PaneSpec) -> some View {
-        // `isActive` is passed into each pane so the pane can fade its
-        // *content* (scroll area) while keeping its title header
-        // visible. LichClient defers its render-state clear by 1.5s so
-        // the last-seen content stays rendered during the fade.
+        // `isActive` lets each pane fade its *content* (scroll area) while
+        // keeping its title header visible. LichClient defers its render-state
+        // clear so the last-seen content stays rendered during the fade.
         switch spec.source {
         case .stream(let streamId):
             StreamPane(

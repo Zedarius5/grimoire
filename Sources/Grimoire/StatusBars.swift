@@ -142,16 +142,13 @@ struct RoundtimeBricks: View {
     let state: GameState
 
     /// Bumped by the 10Hz timer purely as a re-render trigger; the
-    /// actual countdown math reads `Date()` in `remainingSeconds`, so
-    /// a stale `now` after an idle gap can't produce a wrong brick
-    /// count when a fresh RT arrives.
+    /// countdown math reads `Date()` in `remainingSeconds`, so a stale
+    /// `now` after an idle gap can't produce a wrong brick count.
     ///
-    /// NOTE: do NOT make this view Equatable with a stored-property-only
-    /// `==`. SwiftUI's `.equatable()` wrapper compares the let-fields
-    /// only -- @State changes are invisible to the comparison, so an
-    /// Equatable-wrapped RoundtimeBricks would freeze its countdown
-    /// the instant `state` stopped changing (the 10Hz `now` ticks
-    /// would all short-circuit as "no change" against the let-fields).
+    /// Do NOT make this view Equatable with a stored-property-only `==`:
+    /// SwiftUI's `.equatable()` compares only the let-fields, so @State
+    /// `now` ticks would be invisible and the countdown would freeze the
+    /// instant `state` stopped changing.
     @State private var now: Date = Date()
     /// Whether the previous tick saw at least one active counter.
     /// Lets us fire one extra tick after active → inactive so the
@@ -175,12 +172,11 @@ struct RoundtimeBricks: View {
         return contents
             .frame(height: Self.totalHeight, alignment: .leading)
             .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { tick in
-                // Only invalidate body when something's actually
-                // counting — at-idle profiling showed the always-on
-                // 10Hz tick burning ~5% CPU on phantom SwiftUI
+                // Only invalidate body while something's counting, so the
+                // always-on 10Hz tick doesn't burn CPU on idle SwiftUI
                 // transactions. `wasActive` lets the trailing
-                // active → inactive tick still fire so the final
-                // "0 bricks" render goes out before we go dormant.
+                // active → inactive tick still fire so the final "0 bricks"
+                // render goes out before we go dormant.
                 let active = remainingSeconds(until: state.roundtimeEnd) > 0
                           || remainingSeconds(until: state.castTimeEnd) > 0
                 if active || wasActive { now = tick }
@@ -219,11 +215,9 @@ struct RoundtimeBricks: View {
 
     private func remainingSeconds(until end: TimeInterval?) -> Int {
         guard let end else { return 0 }
-        // Read wall-clock directly. Using `now` (the @State) instead
-        // would mean a fresh RT arriving after a long idle gap would
-        // render against stale time and explode the brick count
-        // (`ceil(newEnd - stale_now)` instead of the few seconds the
-        // server actually intends).
+        // Read wall-clock directly, not `now` (the @State). A fresh RT
+        // arriving after a long idle gap would render against stale time
+        // and explode the brick count.
         return max(0, Int(ceil(end - Date().timeIntervalSince1970)))
     }
 }

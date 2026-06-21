@@ -85,10 +85,7 @@ struct MacroEngineTokenizeTests {
 @MainActor
 struct MacroEngineCanonicalKeyTests {
 
-    // NSEvent is annoying to synthesize in tests (requires the AppKit
-    // event system); we can't directly cover canonicalKey here. The
-    // string normalization that compares user-typed bindings to
-    // canonical keys is reachable via the public `MacroEngine.install`
-    // + `setActive` round-trip if needed -- left as a sketch for
-    // future expansion.
+    // canonicalKey can't be covered directly: NSEvent requires the AppKit
+    // event system to synthesize. The string normalization it feeds is
+    // reachable via the public `install` + `setActive` round-trip if needed.
 }

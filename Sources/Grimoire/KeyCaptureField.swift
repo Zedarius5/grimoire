@@ -2,13 +2,10 @@ import SwiftUI
 import AppKit
 import GrimoireKit
 
-/// Hotkey-capture field — click to enter capture mode, press a key combo
-/// to bind it, Esc to cancel. Mirrors the pattern used by macOS System
-/// Settings, Karabiner, and most modern apps that take keyboard shortcuts.
-///
-/// Replaces the free-form TextField for the macro editor's `key` column.
-/// Beyond the UX win, it sidesteps the per-keystroke `@Published` cascade
-/// the TextField path used to trigger on every character typed.
+/// Hotkey-capture field — click to enter capture mode, press a key combo to
+/// bind it, Esc to cancel. Used for the macro editor's `key` column instead
+/// of a free-form TextField, which also avoids a per-keystroke `@Published`
+/// cascade on every character typed.
 struct KeyCaptureField: View {
     @Binding var keyName: String
 

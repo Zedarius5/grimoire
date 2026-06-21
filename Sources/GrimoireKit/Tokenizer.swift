@@ -176,15 +176,12 @@ private struct Scanner {
     }
 }
 
-/// XML attribute values arrive escaped (`wyrm&apos;s heart`), so every
-/// attribute-rendered string has to be decoded before display. Text
-/// content is handled separately via the tokenizer's `.entityRef`
-/// tokens + `StreamRenderer.decodeEntity`, so this only fires for the
-/// attribute path.
+/// Decodes escaped XML attribute values (`wyrm&apos;s heart`). Text content
+/// is decoded separately via `.entityRef` tokens + `StreamRenderer.decodeEntity`,
+/// so this only fires for the attribute path.
 ///
-/// `&amp;` is decoded LAST so we don't double-decode sequences like
-/// `&amp;apos;` (which arrives wanting to be the literal text `&apos;`,
-/// not the apostrophe).
+/// `&amp;` is decoded LAST so sequences like `&amp;apos;` (which should become
+/// the literal text `&apos;`, not an apostrophe) aren't double-decoded.
 private func decodeXMLEntities(_ s: String) -> String {
     guard s.contains("&") else { return s }
     var out = s

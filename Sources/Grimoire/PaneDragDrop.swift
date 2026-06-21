@@ -8,16 +8,14 @@ extension NSPasteboard.PasteboardType {
     static let grimoirePane = NSPasteboard.PasteboardType("com.zedarius.Grimoire.pane.id")
 }
 
-/// SwiftUI-friendly wrapper that turns any pane view into a robust drag
-/// source + drop target via AppKit primitives. Replaces SwiftUI's
-/// `.draggable` / `.dropDestination` pair, which proved unreliable on
-/// macOS — `isTargeted` callbacks dropped state and drop actions sometimes
-/// failed to fire when source/target views re-rendered mid-drag.
+/// Wraps a pane view as a drag source + drop target via AppKit primitives
+/// instead of SwiftUI's `.draggable` / `.dropDestination`, which dropped
+/// `isTargeted` state and sometimes failed to fire drops when views
+/// re-rendered mid-drag.
 ///
-/// Drag starts on click+drag past a small threshold (anywhere in the pane);
-/// the drag image is a snapshot of the pane. Drops on another pane invoke
-/// `onDrop` synchronously — guaranteed by AppKit's drag/drop API, not
-/// dependent on SwiftUI's reconciler timing.
+/// Drag starts on click+drag past a small threshold; the drag image is a
+/// snapshot of the pane. Drops invoke `onDrop` synchronously (guaranteed by
+/// AppKit, not dependent on SwiftUI's reconciler timing).
 struct PaneDragWrapper<Content: View>: NSViewRepresentable {
     let paneId: String
     let onDragBegin: (String) -> Void
@@ -128,10 +126,9 @@ final class PaneDragNSView<Content: View>: NSView, NSDraggingSource {
     }
 
     override func mouseUp(with event: NSEvent) {
-        // If we never crossed the drag threshold, treat the click as a no-op
-        // — most pane interactions (link clicks, text selection start) work
-        // because SwiftUI's hosted views run their own gesture handling
-        // *during* the drag, before our threshold trips.
+        // If we never crossed the drag threshold, the click is a no-op here:
+        // hosted SwiftUI views run their own gesture handling during the
+        // drag (before the threshold trips), so link clicks / selection work.
         mouseDownLocation = nil
     }
 

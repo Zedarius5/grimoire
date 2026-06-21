@@ -53,26 +53,16 @@ struct StatusBox: View {
 
     var body: some View {
         let _ = Diagnostics.shared.recordPaneEval("StatusBox")
-        // Single horizontal row of icons sized to fill the available
-        // height. We measure the container with GeometryReader and pick
-        // an icon size that's the smaller of (a) the full container
-        // height after padding and (b) the per-icon slice of width once
-        // we account for inter-icon spacing.
-        //
-        // Effect: 1-3 active indicators read at the full container
-        // height (nice and big); 4+ indicators shrink the icons
-        // horizontally to keep them on one line. With only ~1 body
-        // position + up to 4 conditions active simultaneously in
-        // practice, this stays comfortably big in the common case.
+        // Single row of icons. Icon size is the smaller of the padded
+        // container height and the per-icon width slice, so a few
+        // indicators render large while 4+ shrink to stay on one line.
         GeometryReader { proxy in
             let count = activeIndicators.count
             let pad: CGFloat = 8
             let gap: CGFloat = 6
-            // Hard cap on icon size — without this the icons fill the full
-            // container height (~80pt with the current bottom-bar height),
-            // which reads as oversized next to the input/vitals chrome.
-            // 52pt is a sweet spot: noticeably bigger than the previous
-            // 40pt but still proportional to the surrounding UI.
+            // Hard cap on icon size — without it the icons fill the full
+            // container height and read as oversized next to the
+            // input/vitals chrome.
             let maxIconSize: CGFloat = 52
             let availW = max(0, proxy.size.width - pad * 2)
             let availH = max(0, proxy.size.height - pad * 2)
@@ -96,10 +86,8 @@ struct StatusBox: View {
             }
             .padding(pad)
         }
-        // Wider StatusBox eats from the flex InputBar/VitalsBar column to
-        // its left. The InputBar/VitalsBar are already `maxWidth:
-        // .infinity`, so they shrink automatically — no other layout
-        // changes needed to accommodate.
+        // Fixed width; the adjacent InputBar/VitalsBar are `maxWidth:
+        // .infinity` and shrink to accommodate it.
         .frame(width: 260)
         .frame(maxHeight: .infinity)
         .background(GameTheme.background)

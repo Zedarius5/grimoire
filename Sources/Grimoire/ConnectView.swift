@@ -88,9 +88,8 @@ struct ConnectView: View {
 
         client.clearFailure()
 
-        // sge_auth.rb ships inside the app's resource bundle (see
-        // Package.swift). Resolving it from the bundle — rather than a
-        // hardcoded checkout path — is what lets the app work on any Mac.
+        // sge_auth.rb ships in the app's resource bundle. Resolving it from the
+        // bundle rather than a hardcoded checkout path lets the app run on any Mac.
         guard let script = Bundle.module.url(forResource: "sge_auth", withExtension: "rb")?.path else {
             client.reportFailure("Couldn't find the bundled login helper (sge_auth.rb).")
             return

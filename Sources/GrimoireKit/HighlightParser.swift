@@ -13,9 +13,8 @@ public enum HighlightImportError: Error, LocalizedError {
 }
 
 /// Imports Wrayth's `<settings><strings><h .../></strings><palette>...</palette></settings>`
-/// highlight format. Wrayth references palette entries as `@N` from inside
-/// the highlight rows; we resolve those to `#RRGGBB` after both sections have
-/// been seen (palette appears after strings in the XML).
+/// highlight format. Highlight rows reference palette entries as `@N`; these
+/// resolve to `#RRGGBB` after parsing, since the palette follows strings in the XML.
 public enum HighlightParser {
     public static func parse(file url: URL) throws -> [Highlight] {
         guard let data = try? Data(contentsOf: url) else {

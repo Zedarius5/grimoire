@@ -20,10 +20,9 @@ public final class StreamRenderer {
 
     private var streamStack: [String] = []
     /// Stack of opened tag names whose contents we suppress from the visible
-    /// feed (compDef, component, openDialog, etc.). Tracking by name — not a
-    /// raw counter — means a stray close tag for one of these can't silently
-    /// decrement the depth and unbalance the parser; mismatched closes are
-    /// just ignored.
+    /// feed (compDef, component, openDialog, etc.). Tracked by name — not a
+    /// counter — so a stray close tag can't decrement the depth and unbalance
+    /// the parser; mismatched closes are ignored.
     private var invisibleStack: [String] = []
     private var invisibleDepth: Int { invisibleStack.count }
     private var boldDepth: Int = 0
@@ -92,11 +91,9 @@ public final class StreamRenderer {
     private var currentMenuId: String? = nil
     private var currentMenuItems: [MenuItem] = []
 
-    /// Set of tag names we've already logged as unrecognised, so the
-    /// diagnostic doesn't spam the log every time the same unknown tag
-    /// arrives. Used by the temporary "log unknown tags" instrumentation
-    /// that helps identify which Stormfront XML tags we still need to
-    /// implement (e.g., the `GOAL`/`SIMUCOIN` browser-launch directive).
+    /// Tag names already logged as unrecognised, so the diagnostic logs each
+    /// unknown tag once instead of on every arrival. Helps identify Stormfront
+    /// XML tags not yet implemented.
     private var loggedUnknownTags: Set<String> = []
 
     /// Pops a server menu from the cache (if it's arrived). Callers should
@@ -107,9 +104,9 @@ public final class StreamRenderer {
     }
 
     /// Forces all volatile state back to a clean slate. Used as a watchdog
-    /// from `LichClient` when other streams continue updating but `main`
-    /// has gone silent — symptom of an unrecoverable stuck pushStream /
-    /// invisibleStack that the prompt-boundary safety net failed to catch.
+    /// from `LichClient` when other streams keep updating but `main` has gone
+    /// silent — a stuck pushStream/invisibleStack the prompt-boundary safety
+    /// net didn't catch.
     public func forceResetVolatileState() {
         if !invisibleStack.isEmpty {
             appLog("StreamRenderer", "Watchdog reset invisibleStack=\(self.invisibleStack)", level: .info)
@@ -187,13 +184,11 @@ public final class StreamRenderer {
         let isMonsterbold = monsterboldDepth > 0
             || styleStack.contains("monsterbold")
 
-        // Inside speech-family presets, suppress *direction*-kind links
-        // (`<d>`) but keep *entity*-kind links (`<a>`). Stormfront wraps
-        // speech adverbs/verbs ("squeakily", "ask") in `<d cmd="...">`
-        // tags whose menus are noise — those are the suppression target.
-        // Player and creature names mentioned IN the spoken text use
-        // `<a noun="..." exist="...">` and should remain clickable so
-        // you can target them straight from chat.
+        // Inside speech-family presets, suppress direction-kind links (`<d>`)
+        // but keep entity-kind links (`<a>`). Stormfront wraps speech
+        // adverbs/verbs in `<d cmd="...">` tags whose menus are noise, while
+        // player/creature names use `<a noun="..." exist="...">` and should
+        // stay clickable so you can target them from chat.
         let inSpeechFamily = styleStack.contains(where: {
             $0 == "speech" || $0 == "whisper" || $0 == "thought"
         })
@@ -238,10 +233,9 @@ public final class StreamRenderer {
         switch name {
         case "pushStream":
             let id = attrs["id"] ?? ""
-            // Empty-id pushes are protocol noise — leaving them on the stack
-            // routes subsequent main-stream text to a phantom stream id and
-            // is the leading suspect for "story window goes silent" bug.
-            // Skip them.
+            // Empty-id pushes are protocol noise: leaving them on the stack
+            // routes main-stream text to a phantom stream id and can silence
+            // the story window. Skip them.
             if !id.isEmpty {
                 streamStack.append(id)
                 if streamStack.count > 4 {
@@ -335,11 +329,9 @@ public final class StreamRenderer {
             updateVerbsCount += 1
             appLog("StreamRenderer", "<updateverbs/> arrived (count=\(self.updateVerbsCount))", level: .debug)
 
-        // Server-pushed browser launch directive — used by `GOAL` (training
-        // points), `SIMUCOIN STORE`, and similar play.net redirect commands.
-        // Real tag name is `LaunchURL` (capital L) with a `src` attribute,
-        // typically a play.net-relative path like `/gs4/play/cm/loader.asp?...`.
-        // `resolveLaunchURL` rebases the relative form against play.net.
+        // Server-pushed browser launch directive (e.g. `GOAL`, `SIMUCOIN
+        // STORE`). The `src` attribute is typically a play.net-relative path
+        // like `/gs4/play/cm/loader.asp?...`; `resolveLaunchURL` rebases it.
         case "LaunchURL":
             if let raw = attrs["src"], !raw.isEmpty,
                let resolved = Self.resolveLaunchURL(raw) {
@@ -381,9 +373,8 @@ public final class StreamRenderer {
             promptDepth += 1
         case "compDef", "component",
              "menuLink", "output":
-            // openDialog/closeDialog are deliberately NOT in this catch-all —
-            // their specific cases below carry side-effects (set dialog title,
-            // remove dialog) that the catch-all would mask by matching first.
+            // openDialog/closeDialog are deliberately NOT here — their specific
+            // cases below carry side-effects this catch-all would mask.
             if !selfClosing { invisibleStack.append(name) }
 
         // Compass block — capture the `<dir>` children as the available exits.
@@ -535,11 +526,8 @@ public final class StreamRenderer {
             }
 
         default:
-            // Surface unknown open tags exactly once each, with their
-            // attributes, so we can identify which Stormfront XML
-            // directives we haven't implemented yet. Particularly useful
-            // for hunting down the browser-launch tag triggered by
-            // commands like `GOAL` and `SIMUCOIN STORE`.
+            // Surface each unknown open tag once, with attributes, to identify
+            // Stormfront XML directives not yet implemented.
             if !loggedUnknownTags.contains(name) {
                 loggedUnknownTags.insert(name)
                 let attrPairs = attrs
@@ -578,12 +566,10 @@ public final class StreamRenderer {
         case "prompt":
             if promptDepth > 0 { promptDepth -= 1 }
             // Stormfront prompts are reliable frame boundaries: by the time
-            // the server emits `>`, everything inside the previous tick
-            // should have closed. If state is non-empty here, something
-            // unbalanced is wedged — most damagingly `invisibleDepth > 0`,
-            // which silently swallows every line of main-feed text while
-            // dialog widget updates keep flowing. Reset to a known-good
-            // state so the story feed unsticks itself.
+            // the server emits `>`, everything inside the previous tick should
+            // have closed. Non-empty state here means something unbalanced is
+            // wedged — most damagingly `invisibleDepth > 0`, which swallows all
+            // main-feed text. Reset to a known-good state to unstick the feed.
             if promptDepth == 0 {
                 if !invisibleStack.isEmpty {
                     appLog("StreamRenderer", "Prompt safety net: dropping stuck invisibleStack=\(self.invisibleStack)", level: .info)
@@ -615,13 +601,9 @@ public final class StreamRenderer {
              "menuLink", "openDialog", "closeDialog",
              "output":
             // Only pop when this close matches the most recently-opened
-            // suppressed tag. An unbalanced close from upstream (eloot's
-            // silent-mode helpers strip XML on the way through and can leak
-            // one side of a pair) used to silently decrement the counter,
-            // sometimes leaving it at -1 — meaning the *next* legitimate
-            // open would never bring it above zero, and *meaning* the main
-            // feed went permanently silent. Name-stack avoids that whole
-            // class of drift.
+            // suppressed tag. Upstream scripts can leak one side of a pair; a
+            // raw counter would drift negative and silence the main feed
+            // permanently. Matching by name avoids that whole class of drift.
             if invisibleStack.last == name {
                 invisibleStack.removeLast()
             }

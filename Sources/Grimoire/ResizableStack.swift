@@ -39,16 +39,12 @@ struct ResizableStack<ItemID: Hashable>: View {
             let available = max(0, total - CGFloat(dividers) * dividerThickness)
             let resolved = resolveSizes(available: available)
 
-            // SwiftUI identity is keyed on the item id (not its array
-            // index). Indexing by position causes any reorder /
-            // insertion to look like "different content at this slot"
-            // and SwiftUI rebuilds the child view -- which, for a
-            // StoryTextView pane, destroys the underlying NSTextView
-            // and the next mount starts at scroll-y=0. Symptom: a side
-            // pane "popping to the top" when an unrelated pane
-            // appears or is dragged. Tagging by the actual item id
-            // lets SwiftUI move the existing view to its new slot
-            // instead of rebuilding.
+            // Key SwiftUI identity on the item id, not the array index.
+            // Indexing by position makes any reorder/insertion look like
+            // "different content at this slot", so SwiftUI rebuilds the
+            // child — which for a StoryTextView pane destroys the underlying
+            // NSTextView and resets scroll to the top. Tagging by item id
+            // lets SwiftUI move the existing view to its new slot instead.
             let indexed = Array(zip(items.indices, items))
             stackContainer {
                 ForEach(indexed, id: \.1) { (idx, item) in
@@ -125,11 +121,10 @@ struct ResizableStack<ItemID: Hashable>: View {
 
 /// Rectangle handle that turns mouse drags into incremental size deltas.
 ///
-/// We bypass SwiftUI's `DragGesture` because that gesture reports translation
-/// in the handle's *local* coordinate space — and the handle moves on every
-/// frame as the panels resize. The result was a ~50% drag-speed feel as the
-/// handle "chased" the cursor. Tracking `locationInWindow` from AppKit gives
-/// 1:1 cursor mapping and removes the visible jitter.
+/// We bypass SwiftUI's `DragGesture` because it reports translation in the
+/// handle's *local* space, and the handle moves every frame as panels resize
+/// — so the handle "chases" the cursor (drag feels half-speed, jittery).
+/// Tracking `locationInWindow` from AppKit gives 1:1 cursor mapping.
 private struct DividerHandle: View {
     let axis: SplitAxis
     let thickness: CGFloat

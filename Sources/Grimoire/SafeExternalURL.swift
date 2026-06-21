@@ -2,17 +2,15 @@ import AppKit
 import Foundation
 
 /// Centralised, user-guarded path for opening external URLs that originate
-/// from the game connection — both the server-pushed `<LaunchURL>` directives
-/// and clicked `<a href>` links.
+/// from the game connection — server-pushed `<LaunchURL>` directives and
+/// clicked `<a href>` links.
 ///
-/// Game data is only semi-trusted: a compromised connection, a man-in-the
-/// middle on the local Lich socket, or a sketchy third-party Lich script could
-/// inject a link. So we never hand a URL straight to the OS:
+/// Game data is only semi-trusted (a compromised connection or third-party
+/// Lich script could inject a link), so we never hand a URL straight to the OS:
 ///
 ///   - http/https links: confirm with the user, showing the full URL.
 ///   - any other scheme (file://, custom app schemes, javascript:, …): refuse
-///     and explain why, since those can launch apps or open files without
-///     warning.
+///     and explain, since those can launch apps or open files without warning.
 @MainActor
 enum SafeExternalURL {
 

@@ -17,9 +17,8 @@ final class SpellPresetStore: ObservableObject {
     }
 
     /// Lich's cached spell-name database (`~/Gemstone/data/effect-list.xml`).
-    /// Read once at init; the editor uses it as a fallback label when
-    /// no live dialog text is available — same data Lich's `Spell[id].name`
-    /// returns at runtime.
+    /// Read once at init; the editor uses it as a fallback label when no
+    /// live dialog text is available.
     let spellNames: SpellNameDatabase
 
     init(spellNames: SpellNameDatabase = .shared) {

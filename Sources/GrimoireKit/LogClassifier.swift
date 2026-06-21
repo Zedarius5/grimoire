@@ -65,8 +65,8 @@ public enum LogClassifier {
         "PTPs/MTPs:", "Exp to next TP:", "Exp to next ATP:", "Exp until lvl:", "ATPs:"
     ]
     private static let expInline = regex(#"\bExp:\s*[\d,]+"#)
-    // Folded into Experience per the user: mind-saturation warnings and
-    // the Wisdom of the Ages buff readout.
+    // Folded into Experience: mind-saturation warnings and the Wisdom of
+    // the Ages buff readout.
     private static let expExtra = regex(#"mind is .*saturated|imperative that you rest|Wisdom of the Ages"#)
 
     private static let resourceVitals = regex(#"^\s*Health:\s*[\d,]+/[\d,]+"#)

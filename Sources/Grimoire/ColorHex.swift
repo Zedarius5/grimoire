@@ -45,12 +45,10 @@ extension Color {
     /// malformed inputs so callers can fall back to a default.
     init?(hex: String) {
         guard let c = parseHex(hex) else { return nil }
-        // Explicitly sRGB. The unspecified-color-space initializer can
-        // fall through to Generic RGB (gamma 1.8) in some macOS render
-        // paths, which brightens neutral grays — e.g. an editor-set
-        // trough of `#333333` reads back as `#515151` in Digital Color
-        // Meter when sampled in sRGB. Naming the color space pins the
-        // gamma curve to 2.2 so the on-screen value matches the hex.
+        // Explicitly sRGB. The unspecified-color-space initializer can fall
+        // through to Generic RGB (gamma 1.8) in some macOS render paths, which
+        // brightens neutral grays; naming the color space pins gamma to 2.2 so
+        // the on-screen value matches the hex.
         self = Color(.sRGB, red: c.r, green: c.g, blue: c.b, opacity: c.a)
     }
 

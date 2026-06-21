@@ -235,9 +235,8 @@ struct SpellPresetEditorView: View {
     private func presetRow(_ preset: SpellPreset, indented: Bool = false) -> some View {
         HStack(spacing: 8) {
             if indented {
-                // Visual nesting under an expanded group. Sized to
-                // line up with the group's text column (chevron + dot
-                // + small gap).
+                // Indent to line up with the group's text column
+                // (chevron + dot + gap).
                 Color.clear.frame(width: 20, height: 1)
             }
             Circle()
@@ -270,14 +269,11 @@ struct SpellPresetEditorView: View {
     }
 
     /// Display label for a preset row. Priority:
-    ///  1. User's display-name override (always wins — explicit intent).
+    ///  1. User's display-name override.
     ///  2. Live in-game text from `client.dialogs` (covers active spells).
-    ///  3. Lich's cached spell-name database — `~/Gemstone/data/effect-list.xml`,
-    ///     populated by Lich the same way `Spell[id].name` resolves in
-    ///     timers.lic. Means the editor shows real names even when
-    ///     disconnected, for any spell Lich has ever seen.
-    ///  4. "Spell #ID" — last resort, for cooldowns/ability ids that
-    ///     don't appear in the spell database.
+    ///  3. Lich's cached spell-name database, so real names show even
+    ///     when disconnected, for any spell Lich has ever seen.
+    ///  4. "Spell #ID" — last resort for ids absent from the database.
     private func rowLabel(for preset: SpellPreset) -> String {
         if let custom = preset.displayName, !custom.isEmpty { return custom }
         if let live = liveSpellName(spellId: preset.spellId), !live.isEmpty { return live }
@@ -295,11 +291,9 @@ struct SpellPresetEditorView: View {
         return resolved.barColor.flatMap(Color.init(hex:)) ?? Color.blue
     }
 
-    /// Searches every live dialog (not just the current window's) for
-    /// a progressBar whose id matches. Returns its `text` so the
-    /// editor can show real spell names. Walks all dialogs because a
-    /// spell may surface in multiple ones (Buffs *and* Active Spells)
-    /// and we want a name from any of them.
+    /// Returns the `text` of any live progressBar matching `spellId`.
+    /// Searches every dialog, not just the current window's, since a
+    /// spell may surface in several (Buffs and Active Spells).
     private func liveSpellName(spellId: String) -> String? {
         for dialog in client.dialogs.values {
             for widget in dialog.widgets {
@@ -750,8 +744,8 @@ private struct PresetDetail: View {
     }
 
     /// Name shown in the preview when the user hasn't typed a custom
-    /// display name. Falls through to Lich's spell-name database
-    /// (`Spell[id].name` equivalent) before resorting to "Spell #ID".
+    /// display name. Falls through to Lich's spell-name database before
+    /// resorting to "Spell #ID".
     private var previewName: String {
         if !displayName.isEmpty { return displayName }
         if let cached = store.spellNames.name(forId: preset.spellId), !cached.isEmpty {

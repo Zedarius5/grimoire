@@ -34,17 +34,12 @@ struct LichClientTests {
 
     @Test("echoLocal collapses adjacent prompt-only lines")
     func adjacentPromptsCollapse() {
-        // The server (and our own echoLocal) emits prompt-only `>` lines
-        // around commands. We collapse consecutive ones so the feed
-        // doesn't fill with chevrons. echoLocal lines aren't prompt-only
-        // (they contain the command), but consecutive bare prompts WOULD
-        // be -- this verifies the guard structure even though echoLocal
-        // doesn't itself emit bare prompts.
+        // Consecutive prompt-only `>` lines are collapsed so the feed doesn't
+        // fill with chevrons. echoLocal lines contain the command (not
+        // prompt-only), so both are retained here.
         let client = LichClient()
         client.echoLocal("> look")
         client.echoLocal("> smile")
-        // Both should be retained (they're not prompt-only -- they
-        // contain command text).
         #expect(client.mainLines.count == 2)
     }
 
@@ -54,9 +49,8 @@ struct LichClientTests {
         client.echoLocal("> previous session")
         #expect(!client.mainLines.isEmpty)
 
-        // connect() to a port that won't be listening; the synchronous
-        // part of connect() still runs (resets state, bumps generation,
-        // queues the actual NWConnection setup on workQueue).
+        // Port 9 won't be listening, but connect()'s synchronous part still
+        // runs (resets state, bumps generation, queues the NWConnection setup).
         client.connect(host: "127.0.0.1", port: 9, mode: .raw)
 
         #expect(client.mainLines.isEmpty,
@@ -70,13 +64,11 @@ struct LichClientTests {
     func connectSetsConnectingStatus() {
         let client = LichClient()
         client.connect(host: "127.0.0.1", port: 9, mode: .raw)
-        // We check immediately after connect() returns -- the workQueue
-        // async hasn't necessarily run yet, so status should still be
-        // .connecting from the synchronous setup. (Even if it has run
-        // and immediately failed, the synchronous part ran first.)
+        // Checked immediately after connect() returns: the workQueue async may
+        // not have run, so status is .connecting from the synchronous setup
+        // (or .failed if the attempt already bounced).
         switch client.status {
         case .connecting, .failed:
-            // .failed is OK too -- the connection attempted and bounced.
             break
         default:
             Issue.record("Expected .connecting or .failed, got \(client.status)")

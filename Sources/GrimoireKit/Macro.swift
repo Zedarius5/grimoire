@@ -34,12 +34,11 @@ public struct MacroConfig: Codable, Equatable, Sendable {
 
     // MARK: - Set/binding mutations (id-keyed, guarded)
     //
-    // These resolve the target set by its stable `id` at the moment of the
-    // call, never by a positional index captured earlier. The editor's
-    // deferred `.onDisappear` flushes can fire *after* a set has been deleted
-    // or reordered, so an index-based mutation would crash (index out of
-    // range) or silently write onto the wrong set. Resolving by id + guarding
-    // makes a stale flush a harmless no-op.
+    // Resolve the target set by its stable `id` at call time, never by a
+    // captured index: the editor's deferred `.onDisappear` flushes can fire
+    // after a set is deleted or reordered, so an index-based mutation would
+    // crash or write onto the wrong set. Resolving by id + guarding makes a
+    // stale flush a harmless no-op.
 
     /// Renames the set with `id`, if it still exists.
     public mutating func renameSet(id: Int, to name: String) {

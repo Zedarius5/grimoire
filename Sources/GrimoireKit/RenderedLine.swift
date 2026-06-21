@@ -14,12 +14,10 @@ public struct RenderedRun: Equatable, Sendable {
 /// Visual attributes carried by a run.
 public struct RunStyle: Equatable, Hashable, Sendable {
     public var bold: Bool
-    /// True when the text is inside `<pushBold/>`/`<popBold/>` markers or the
-    /// `monsterbold` preset — Stormfront's convention for hostile creatures
-    /// and other "this is an NPC" highlights. Distinct from `bold` (which
-    /// covers plain `<b>` emphasis like inventory item names) so the
-    /// renderer can colour monsterbold yellow without dragging item bolds
-    /// along.
+    /// True inside `<pushBold/>`/`<popBold/>` markers or the `monsterbold`
+    /// preset — Stormfront's convention for hostile NPCs. Distinct from `bold`
+    /// (plain `<b>` emphasis like item names) so the renderer can colour
+    /// monsterbold yellow without dragging item bolds along.
     public var monsterbold: Bool
     public var styleId: String?
     public var link: LinkRef?
@@ -28,11 +26,10 @@ public struct RunStyle: Equatable, Hashable, Sendable {
     public var highlightFg: String?
     /// Override background colour from a custom Highlight, hex `#RRGGBB`.
     public var highlightBg: String?
-    /// Highlight-driven trait additions. Stacked on top of the
-    /// protocol-derived `bold` / `monsterbold` so a user rule can
-    /// promote a span without un-bolding anything that was already
-    /// bold. `italic` only has a highlight source today — the
-    /// SF/Wrayth protocol doesn't emit italic.
+    /// Highlight-driven trait additions, stacked on top of the
+    /// protocol-derived `bold`/`monsterbold` so a user rule can promote a span
+    /// without un-bolding what was already bold. `italic` has only a highlight
+    /// source — the SF/Wrayth protocol doesn't emit italic.
     public var highlightBold: Bool
     public var italic: Bool
 

@@ -3,9 +3,8 @@ import AppKit
 import SwiftUI
 import GrimoireKit
 
-// Note: `LinkRef.clickURL` moved to GrimoireKit (LinkRef+ClickURL.swift)
-// so it can be unit-tested. The router below consumes the resulting
-// `grimoire://` URLs.
+// `LinkRef.clickURL` lives in GrimoireKit (LinkRef+ClickURL.swift, where it's
+// unit-tested). The router below consumes the resulting `grimoire://` URLs.
 
 /// Holds onto the per-menu-item command + client reference. NSMenuItem
 /// targets must be reference types; we attach this to `representedObject`

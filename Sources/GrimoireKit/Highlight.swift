@@ -29,9 +29,8 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// `NSRegularExpression` understands it). Compiles to a regex
     /// cached per pattern string in `HighlightProcessor`.
     public var usesPattern: Bool
-    /// Font-trait additions applied to matched spans. Stack on top of
-    /// the protocol-derived `<b>` / monsterbold bold, so a user rule
-    /// can promote a span without un-bolding anything already bolded.
+    /// Font-trait additions applied to matched spans. Stack on top of the
+    /// protocol-derived `<b>` / monsterbold bold (additive, never un-bolding).
     public var bold: Bool
     public var italic: Bool
     /// Optional `HighlightGroup` membership. When set, fields the rule
@@ -40,12 +39,9 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// its group are enabled. See `HighlightStore.effectiveHighlights`
     /// for the resolution.
     public var groupId: UUID?
-    /// Persisted last-chosen fg / bg. When the user toggles "Text
-    /// color" / "Background color" off in the editor we move the
-    /// active color into the stash before clearing the active field,
-    /// so re-enabling the toggle (even across sessions / app restarts)
-    /// brings the original color back. The processor never reads
-    /// these -- they're editor-only persistence.
+    /// Persisted last-chosen fg / bg. The editor stashes the active color here
+    /// when a color toggle is turned off, so re-enabling it (even across
+    /// restarts) restores the color. Editor-only; the processor never reads these.
     public var stashedFgColor: String?
     public var stashedBgColor: String?
     /// When true (or when the rule's group has notify on), a match
@@ -90,11 +86,9 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.notify = notify
     }
 
-    // Custom decoding so configs saved before any of these later fields
-    // existed still load -- anything missing gets a backward-compatible
-    // default (text kind, literal matching, no font traits, no group,
-    // no stash, no notify). Older saved-but-now-removed `underline` /
-    // `strikethrough` keys are just ignored on decode; no migration.
+    // Custom decoding for backward compat: fields added later decode to safe
+    // defaults on older configs, and removed `underline`/`strikethrough` keys
+    // are ignored (no migration).
     private enum CodingKeys: String, CodingKey {
         case id, text, fgColor, bgColor, entireLine, caseSensitive, wholeWord, enabled, kind, usesPattern
         case bold, italic, groupId, stashedFgColor, stashedBgColor, notify
@@ -123,12 +117,10 @@ public struct Highlight: Codable, Equatable, Hashable, Identifiable, Sendable {
 
 /// A named bundle of styling and behavior applied to all member rules.
 /// Members override per-field — a rule with its own `fgColor` ignores
-/// the group's `fgColor`, but a rule that leaves `fgColor` unset
-/// inherits from here.
+/// the group's, but a rule that leaves `fgColor` unset inherits from here.
 ///
-/// Mirrors the spell-preset group pattern in `SpellGroup`; the user
-/// asked for the same model so similar-but-not-identical rules can be
-/// organized together and share notification + styling defaults.
+/// Mirrors the spell-preset group pattern in `SpellGroup`, letting related
+/// rules be organized together and share styling + notification defaults.
 public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var name: String
@@ -136,25 +128,19 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
     /// when their own field is nil.
     public var fgColor: String?
     public var bgColor: String?
-    /// Trait additions that OR with each member rule's own toggles.
-    /// (entireLine, caseSensitive, wholeWord can't be "subtracted" by
-    /// a member rule -- the group is the floor, the rule can promote
-    /// but not demote. Matches the bold/italic semantics already in
-    /// place.)
+    /// Trait additions that OR with each member rule's own toggles. The group
+    /// is the floor: a member rule can promote (enable) but not demote these.
     public var bold: Bool
     public var italic: Bool
     public var entireLine: Bool
     public var caseSensitive: Bool
     public var wholeWord: Bool
-    /// Master toggle. When false, every member rule is treated as
-    /// disabled (the rule's own `enabled` flag is preserved on disk
-    /// so flipping the group back on restores the prior state).
+    /// Master toggle. When false, every member rule is treated as disabled;
+    /// each rule's own `enabled` flag is preserved so flipping the group back
+    /// on restores the prior state.
     public var enabled: Bool
-    /// Hook for the (forthcoming) notifications feature: when true,
-    /// a match by any member rule posts a macOS notification with
-    /// the matched line as the body. Per-rule notify can be layered
-    /// on later -- this group-level toggle is the user-requested
-    /// minimum.
+    /// When true, a match by any member rule posts a macOS notification with
+    /// the matched line as the body. ORs with each rule's own `notify`.
     public var notify: Bool
     /// Persisted last-chosen fg / bg, mirrors the stash on Highlight.
     /// Lets the user toggle "Default text color" off and back on
@@ -192,9 +178,8 @@ public struct HighlightGroup: Codable, Equatable, Hashable, Identifiable, Sendab
         self.stashedBgColor = stashedBgColor
     }
 
-    // Backward-compat decode: stash fields and the newer matching
-    // flags (entireLine/caseSensitive/wholeWord) decode as nil/false
-    // on older configs.
+    // Backward-compat decode: stash fields and the matching flags
+    // (entireLine/caseSensitive/wholeWord) decode to nil/false on older configs.
     private enum CodingKeys: String, CodingKey {
         case id, name, fgColor, bgColor, bold, italic, enabled, notify, stashedFgColor, stashedBgColor
         case entireLine, caseSensitive, wholeWord

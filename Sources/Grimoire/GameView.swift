@@ -12,13 +12,10 @@ struct GameView: View, Equatable {
     @Environment(\.highlights) private var highlights
     @Environment(\.fontSize) private var fontSize
 
-    /// Equality is keyed on `revision`, not `lines.count`. Once a stream
-    /// reaches its cap, every new append is paired with a front-trim and
-    /// `lines.count` stops changing — `.equatable()` would then
-    /// permanently short-circuit body re-evaluation and the feed would
-    /// visually freeze even while new content is being applied. The
-    /// monotonic revision from `LichClient` changes on every append, so
-    /// we re-evaluate whenever there's real new content.
+    /// Equality is keyed on `revision`, not `lines.count`: once a stream
+    /// reaches its cap, each append is paired with a front-trim and
+    /// `lines.count` stops changing, so `.equatable()` would permanently
+    /// freeze the feed. The monotonic `revision` changes on every append.
     nonisolated static func == (lhs: GameView, rhs: GameView) -> Bool {
         lhs.revision == rhs.revision
     }
@@ -85,18 +82,9 @@ struct StreamPane: View, Equatable {
             .padding(.vertical, 6)
             .background(GameTheme.paneHeader)
 
-            // Use the same `StoryTextView` (TextKit 1 NSTextView) the
-            // main story uses, so drag-select across multiple lines
-            // and copy work the same way here as they do in the main
-            // feed. The per-pane line cap (500) is enforced by
-            // LichClient; StoryTextView's reconcile handles the
-            // append + trim. Only the text view fades on disconnect —
-            // the title bar above stays put.
-            //
-            // Side panes render text 1pt smaller than the main feed.
-            // Overriding `\.fontSize` for just this subtree keeps that
-            // adjustment localised without re-introducing the explicit
-            // parameter pass-through.
+            // Same `StoryTextView` the main story uses, so drag-select and
+            // copy behave identically. Side panes render 1pt smaller; we
+            // override `\.fontSize` for just this subtree to keep that local.
             StoryTextView(
                 lines: lines,
                 revision: revision,
@@ -161,11 +149,9 @@ enum GameTheme {
     static let woundScar   = Color(red: 0.82, green: 0.66, blue: 0.43)   // warm tan
 
     // Speech family — Stormfront <preset id="speech"|"whisper"|"thought">.
-    // Same warm-to-cool gradient across the pink-magenta-lavender range so
-    // they read as related but immediately distinguishable. Hue separation
-    // (~30°+ apart) is what makes them feel "notably different"; staying
-    // in the same family is what makes them feel cohesive.
+    // Kept ~30°+ apart in hue so they're distinguishable, but in a related
+    // range so they read as cohesive.
     static let speech  = Color(red: 1.00, green: 0.68, blue: 0.78)  // warm coral pink — audible
-    static let whisper = Color(red: 0.60, green: 0.74, blue: 0.86)  // cool slate blue, muted — private/quiet (visually distinct from speech's warm pink)
+    static let whisper = Color(red: 0.60, green: 0.74, blue: 0.86)  // cool slate blue — private/quiet
     static let thought = Color(red: 0.78, green: 0.65, blue: 1.00)  // soft lavender — internal
 }

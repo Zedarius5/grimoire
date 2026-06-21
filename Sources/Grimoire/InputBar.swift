@@ -1,18 +1,14 @@
 import SwiftUI
 import GrimoireKit
 
-/// Takes only the values it actually reads (plus an `onSend` closure
-/// for the side-effecting path) rather than holding an
-/// `@ObservedObject var client: LichClient`. That keeps the view's
-/// dependency surface tight -- it doesn't get woken up on every
-/// LichClient publish, only when the values that matter change.
+/// Takes only the values it reads (plus an `onSend` closure) rather than an
+/// `@ObservedObject var client: LichClient`, so it isn't woken on every
+/// LichClient publish — only when the values that matter change.
 ///
-/// NOTE: do NOT add `.equatable()` to InputBar at the call site. The
-/// view has internal @State (`text`, `history`, `historyIndex`,
-/// `focused`) that drives visible UI updates (text field content,
-/// history recall). An Equatable wrap would short-circuit body when
-/// only @State changed, so history navigation and macro-fills would
-/// stop propagating to CommandTextField's NSView.
+/// NOTE: do NOT add `.equatable()` to InputBar at the call site. Its internal
+/// @State (`text`, `history`, `historyIndex`, `focused`) drives visible UI;
+/// an Equatable wrap would short-circuit body on @State-only changes, so
+/// history navigation and macro-fills would stop propagating.
 struct InputBar: View {
     let isActive: Bool
     let gameState: GameState
@@ -51,13 +47,12 @@ struct InputBar: View {
                     isEnabled: isActive,
                     foregroundColor: NSColor(GameTheme.foreground),
                     insertionPointColor: NSColor(GameTheme.foreground),
-                    // Drop the `isActive` gate: we want the field to *try*
-                    // for first-responder status from the moment it appears,
-                    // so that the instant `client.isActive` flips true after
-                    // connect the AppKit field can grab focus during the
-                    // same `updateNSView` pass that enables it. Gating on
-                    // `isActive` previously created a race where the field
-                    // became enabled but no one re-triggered `makeFirstResponder`.
+                    // Not gated on `isActive`: the field should try for
+                    // first-responder from the moment it appears, so the
+                    // instant `isActive` flips true after connect it can grab
+                    // focus in the same `updateNSView` pass that enables it.
+                    // Gating on `isActive` left the field enabled with no one
+                    // re-triggering `makeFirstResponder`.
                     shouldFocus: focused,
                     onSubmit: submit,
                     onCtrlReturn:   { repeatNthQualifying(0) },

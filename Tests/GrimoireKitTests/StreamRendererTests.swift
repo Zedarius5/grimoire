@@ -101,10 +101,8 @@ struct StreamRendererTests {
     @Test("speech preset suppresses <d> direction links but keeps <a> entity links")
     func speechPresetSuppressesDirectionLinksOnly() {
         let r = StreamRenderer()
-        // `<d>` wraps the speech verb ("ask") -- Stormfront's menu popup
-        // for these is noise, so we suppress them inside speech presets.
-        // `<a>` wraps player/creature names -- we keep those clickable so
-        // you can target the named NPC straight from chat.
+        // Inside speech presets, `<d>` speech verbs are suppressed (their menus
+        // are noise) while `<a>` player/creature names stay clickable.
         let events = r.render(
             line: "<preset id='speech'>You <d cmd='ask'>ask</d> <a exist='1' noun='Alice'>Alice</a>, \"hello\"</preset>"
         )

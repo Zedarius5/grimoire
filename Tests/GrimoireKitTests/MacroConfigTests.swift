@@ -2,12 +2,10 @@ import Testing
 import Foundation
 @testable import GrimoireKit
 
-/// Regression tests for the macro-set crash: the editor used to thread a
-/// positional array index into deferred `.onDisappear` flush closures, so a
-/// flush that fired *after* the selected set was deleted indexed past the
-/// shrunken array (crash) or wrote onto whatever set had shifted into that
-/// slot (corruption). These cover the id-based, guarded mutation API the
-/// editor now routes through.
+/// Cover the id-based, guarded mutation API: a deferred `.onDisappear` flush
+/// can fire after its set was deleted or reordered, so mutations must resolve
+/// by stable id (not a captured array index) to avoid crashing or writing
+/// onto the wrong set.
 @Suite("MacroConfig mutations")
 struct MacroConfigTests {
 
@@ -18,10 +16,9 @@ struct MacroConfigTests {
             MacroSet(id: 0, name: "Default"),
             MacroSet(id: 5, name: "Hunting", bindings: [b]),
         ])
-        // User deletes the selected set (id 5). It was at the last index.
+        // User deletes the selected set (id 5).
         cfg.sets.removeAll { $0.id == 5 }
-        // The deferred onDisappear flushes that used to fire with a stale
-        // index (id 5 / old index 1) must now be harmless no-ops.
+        // Deferred flushes targeting the deleted set must be harmless no-ops.
         cfg.renameSet(id: 5, to: "STALE")
         cfg.updateBinding(inSet: 5, to: MacroBinding(id: b.id, key: "F1", action: "STALE"))
         cfg.removeBinding(fromSet: 5, bindingId: b.id)

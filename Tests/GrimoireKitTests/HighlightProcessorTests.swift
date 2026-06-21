@@ -135,9 +135,8 @@ struct HighlightProcessorPatternTests {
 
     @Test("matchedText() literal: returns the substring as-it-appeared in the line")
     func matchedTextLiteralPreservesCase() {
-        // Case-insensitive literal: rule.text is lowercase but the
-        // line's hit is mixed case. We want the line's casing in the
-        // notification body, not the rule's.
+        // Case-insensitive literal: the result should keep the line's casing,
+        // not the rule's lowercase text.
         let rule = Highlight(text: "death")
         let result = HighlightProcessor.matchedText(rule, in: "The Death of a Salesman")
         #expect(result == "Death")
@@ -163,8 +162,7 @@ struct HighlightProcessorPatternTests {
     func matchedTextWholeWordSkipsPartial() {
         var rule = Highlight(text: "cat")
         rule.wholeWord = true
-        // First "cat" is inside "category" -- should be rejected. Second
-        // "cat" is whole-word -- should be returned.
+        // The "cat" inside "category" is rejected; the standalone "cat" is returned.
         let result = HighlightProcessor.matchedText(rule, in: "category contains a cat in it")
         #expect(result == "cat")
     }
@@ -196,9 +194,8 @@ struct HighlightProcessorPatternTests {
 
     @Test("Invalid regex fails closed (no match, no crash)")
     func invalidRegexFailsClosed() {
-        // `[` opens a character class that never closes -- ICU returns
-        // a compile error, our wrapper returns nil, the line passes
-        // through unchanged.
+        // `[` opens a character class that never closes: ICU fails to compile,
+        // so the line passes through unchanged.
         let rule = Highlight(text: "[unclosed", usesPattern: true)
             .applying(fgColor: "#FFFFFF")
         let input = line("any text whatsoever")

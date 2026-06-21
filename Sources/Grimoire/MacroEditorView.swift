@@ -107,14 +107,12 @@ struct MacroEditorView: View {
     }
 
     private func header(setIdx: Int) -> some View {
-        // Capture the stable set id now (render time — the index is valid).
-        // The commit closures below fire later from `.onDisappear`, possibly
-        // after this set was deleted, so they must resolve by id, never via
-        // the captured `setIdx`.
+        // Capture the stable set id at render time: the commit closures below
+        // fire later from `.onDisappear` (possibly after this set was deleted),
+        // so they must resolve by id, never via the captured `setIdx`.
         let setId = macros.config.sets[setIdx].id
-        // Wrap in an inner view with stable identity so the local-state
-        // name draft below resets on set switch (and flushes on the
-        // outgoing set's `.onDisappear`).
+        // Inner view with stable identity so the name draft resets on set
+        // switch and flushes on the outgoing set's `.onDisappear`.
         return SetNameHeader(
             set: macros.config.sets[setIdx],
             isActive: macros.activeSetId == setId,
@@ -219,8 +217,7 @@ struct MacroEditorView: View {
 
     private func commitBinding(setId: Int, updated: MacroBinding) {
         // Resolve by set id, not a captured index: this fires from a row's
-        // `.onDisappear`, which can run after the set was deleted. The
-        // model method also skips the write when nothing changed.
+        // `.onDisappear`, which can run after the set was deleted.
         macros.config.updateBinding(inSet: setId, to: updated)
     }
 
@@ -277,14 +274,11 @@ private struct SetNameHeader: View {
 
 /// Row in the macro bindings list.
 ///
-/// Holds local `@State` for both editable fields and ONLY commits back to
-/// the store on `.onDisappear` -- i.e. when the row is removed from the
-/// view tree, which happens on editor-window close, set switch, or
-/// delete. Until then every edit stays purely local, so the rest of the
-/// app sees the prior committed binding and there's no per-keystroke
-/// `@Published` cascade through `MacroEngine.config`. Mirrors the same
-/// pattern as `HighlightDetail` so editor latency is decoupled from
-/// collection size at every typing speed.
+/// Holds local `@State` for both editable fields and commits back to the
+/// store only on `.onDisappear` (editor close, set switch, or delete). Edits
+/// stay local until then, so there's no per-keystroke `@Published` cascade
+/// through `MacroEngine.config` and editor latency stays independent of
+/// collection size.
 private struct BindingRow: View {
     let binding: MacroBinding
     @Binding var requestedCaptureForId: UUID?
@@ -336,9 +330,8 @@ private struct BindingRow: View {
             .buttonStyle(.borderless)
         }
         .onDisappear {
-            // Suppress the flush when the user just hit Delete --
-            // otherwise the local draft would resurrect the row we
-            // just removed.
+            // Skip the flush on delete, or the local draft would resurrect
+            // the row we just removed.
             guard !didDelete else { return }
             onCommit(draft)
         }

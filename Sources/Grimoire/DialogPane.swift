@@ -22,9 +22,8 @@ struct DialogPane: View {
 
     @Environment(\.fontSize) private var fontSize
     /// Needed at the pane level (not just the row level) so `contentHeight`
-    /// can ask for the resolved per-spell `barHeight` and report the
-    /// pane's true intrinsic height — otherwise ScrollView under-sizes
-    /// and Active Spells / Cooldowns won't scroll when full.
+    /// can resolve per-spell `barHeight` and report the pane's true intrinsic
+    /// height — otherwise the ScrollView under-sizes and won't scroll.
     @EnvironmentObject private var spellPresets: SpellPresetStore
     /// Optional wound state — when set, renders a `BodyDiagram` at the top
     /// of the pane (used for the UberBar dialog that emits per-body-part
@@ -48,8 +47,7 @@ struct DialogPane: View {
         var filtered = dialog.widgets.filter { widget in
             // Drop body-part image widgets — they feed `Wounds` directly via
             // `gameState.wounds` and render through `BodyDiagram`, not as
-            // dialog rows. Leaving them in here reserved an empty row per
-            // body part (~280pt of dead-zone in UberBar).
+            // dialog rows. Leaving them in reserves an empty row per body part.
             if case .image = widget { return false }
             if case .label(let id, _, _) = widget,
                id.hasPrefix("l"),
@@ -60,12 +58,9 @@ struct DialogPane: View {
         }
 
         if shouldSortByTime {
-            // Extract the sort key once per widget instead of twice
-            // per comparison. The old comparator called
-            // `widgetTimeSeconds` (→ `parseDurationSeconds` → string
-            // parse) on both sides, so a 20-bar pane did ~170 parses
-            // per sort and SwiftUI was hitting this multiple times
-            // per frame.
+            // Extract the sort key once per widget (each key is a string
+            // parse) rather than recomputing it on both sides of every
+            // comparison — this runs multiple times per frame.
             let keyed = filtered.map { (widget: $0, key: widgetTimeSeconds($0)) }
             filtered = keyed.sorted { $0.key < $1.key }.map(\.widget)
         }
@@ -136,18 +131,11 @@ struct DialogPane: View {
 
     var body: some View {
         let _ = Diagnostics.shared.recordPaneEval("DialogPane:\(dialog.id)")
-        // The 1Hz ticker that drives per-bar countdowns used to live HERE
-        // as a pane-level TimelineView wrapping the entire content. That
-        // meant every widget body in the pane (including labels and
-        // links that don't care about elapsed time) re-evaluated each
-        // second -- with ~92 widgets across all dialogs, the
-        // pane-evals counter was sitting at 92+ per second of pure
-        // overhead under no game activity.
-        //
-        // Now the ticker lives INSIDE the progress-bar branch of
-        // `DialogWidgetView` (the only widget kind that depends on
-        // elapsed time). Labels / links / separators are stable
-        // between data updates.
+        // The 1Hz countdown ticker lives INSIDE the progress-bar branch of
+        // `DialogWidgetView` (the only widget kind that depends on elapsed
+        // time), not as a pane-level TimelineView — otherwise every widget
+        // (labels, links) would re-evaluate each second. Labels / links /
+        // separators are stable between data updates.
         return renderedBody()
     }
 
@@ -186,12 +174,10 @@ struct DialogPane: View {
         .environment(\.colorScheme, .dark)
     }
 
-    /// Height estimate the ScrollView's GeometryReader uses as a minimum
-    /// so the content lays out at the right size. Walks each row and
-    /// sums per-widget heights so a pane with tall progressBars (per-
-    /// spell `barHeight` overrides on Active Spells / Cooldowns etc.)
-    /// reports its true intrinsic height — otherwise the ScrollView
-    /// thinks it fits when it doesn't, and won't scroll.
+    /// Minimum height for the ScrollView's GeometryReader. Sums per-widget
+    /// heights (honouring per-spell `barHeight` overrides) so a tall pane
+    /// reports its true intrinsic height — otherwise the ScrollView thinks
+    /// it fits when it doesn't, and won't scroll.
     private var contentHeight: CGFloat {
         if wounds != nil {
             // Label-only rows sit BESIDE the body diagram so they don't
@@ -226,11 +212,7 @@ struct DialogPane: View {
         return (perWidget.max() ?? 18) + 1   // +1 for VStack spacing
     }
 
-    /// Should track `BodyDiagram.totalSize` in BodyDiagram.swift. The
-    /// paperdoll refactor (2026-05-20) grew the widget from 80×120 to
-    /// 110×150; labeled off-body pips (L.Eye, R.Eye, Back, Nrvs) live
-    /// inside the silhouette frame in the dead space above the
-    /// shoulders and beside the legs.
+    /// Must track `BodyDiagram.totalSize` in BodyDiagram.swift.
     private static let bodyDiagramHeight: CGFloat = 150
 
     private static let bodyDiagramWidth: CGFloat = 110
@@ -257,10 +239,8 @@ struct DialogPane: View {
 
     @ViewBuilder
     private func woundsLayout(wounds: Wounds, geo: GeometryProxy) -> some View {
-        // Compute the row partition once per layout pass — the old
-        // path called `rows` three times (once from `sideBySideRows`,
-        // twice from `remainingRows` via `sideBySideRows`+`rows`),
-        // each of which ran the displayableWidgets filter+sort.
+        // Compute the row partition once per layout pass — `rows` runs the
+        // displayableWidgets filter+sort, so avoid re-evaluating it.
         let partition: (top: [[DialogWidget]], rest: [[DialogWidget]]) = {
             let all = rows
             let split = all.firstIndex(where: { row in
@@ -302,10 +282,8 @@ struct DialogPane: View {
 
     @ViewBuilder
     private func plainLayout(geo: GeometryProxy) -> some View {
-        // Cache `rows` once per layout pass — otherwise both
-        // `rows.indices` and the `rows[rowIdx]` subscript inside the
-        // ForEach re-evaluate the computed property, each call running
-        // the displayableWidgets filter + sort from scratch.
+        // Cache `rows` once per layout pass — it's a computed property that
+        // re-runs the displayableWidgets filter+sort on every access.
         let allRows = rows
         VStack(alignment: .leading, spacing: 1) {
             ForEach(allRows.indices, id: \.self) { rowIdx in
@@ -383,15 +361,11 @@ private struct WidthModifier: ViewModifier {
 }
 
 /// Equatable so SwiftUI can skip the body call when a parent re-render
-/// (e.g. ContentView reacting to an unrelated LichClient @Published
-/// change like a vital tick) creates a new copy of the view with
-/// identical data. Without this, every ContentView re-render walked
-/// through every DialogWidgetView body in the app -- visible in the
-/// pane-eval log as DialogWidget=188/376/etc. per heartbeat. The
-/// closure `onCommand` is intentionally excluded from the comparison;
-/// it's stable across renders in practice and treating it as
-/// always-equal is safe (we never bind a "different" onCommand to the
-/// same logical row).
+/// (e.g. ContentView reacting to an unrelated LichClient change) creates a
+/// new copy with identical data — otherwise every ContentView re-render
+/// walks every DialogWidgetView body. The `onCommand` closure is excluded
+/// from the comparison: it's stable across renders, so treating it as
+/// always-equal is safe.
 private struct DialogWidgetView: View, Equatable {
     let widget: DialogWidget
     let width: CGFloat?
@@ -411,13 +385,10 @@ private struct DialogWidgetView: View, Equatable {
               lhs.timerConfig == rhs.timerConfig,
               lhs.presetWindow == rhs.presetWindow
         else { return false }
-        // `dialogLastUpdated` only matters for progress bars (their
-        // inner TimelineView reads it to compute the countdown's
-        // elapsed value). Labels / links / separators don't read it,
-        // so we DON'T compare it for them -- otherwise every dialog
-        // update (~1Hz under active gameplay) would fail equality for
-        // every static widget in that dialog, defeating the whole
-        // point of the Equatable skip.
+        // `dialogLastUpdated` only matters for progress bars (their inner
+        // TimelineView reads it for the countdown). Comparing it for static
+        // widgets would fail equality on every ~1Hz dialog update and defeat
+        // the Equatable skip, so only progress bars compare it.
         if case .progressBar = lhs.widget {
             return lhs.dialogLastUpdated == rhs.dialogLastUpdated
         }
@@ -427,16 +398,15 @@ private struct DialogWidgetView: View, Equatable {
     @Environment(\.fontSize) private var fontSize
     @EnvironmentObject private var spellPresets: SpellPresetStore
     /// Highlight rules are evaluated against label/link text in dialog
-    /// widgets so user rules apply uniformly across every window
-    /// (story feed, side streams, and dialog panes like
-    /// `;playerwindow`'s output). Empty when the user has no rules,
-    /// in which case `HighlightProcessor.apply` short-circuits.
+    /// widgets so user rules apply uniformly across every window. Empty when
+    /// the user has no rules, in which case `HighlightProcessor.apply`
+    /// short-circuits.
     @EnvironmentObject private var highlights: HighlightStore
 
     /// Runs the user's highlight rules over `text` and returns an
-    /// AttributedString carrying any matched fg/bg overrides. The
-    /// caller still applies the widget's default styling (color,
-    /// font, etc.) -- this layer only overlays user-defined rules.
+    /// AttributedString carrying any matched fg/bg overrides. The caller
+    /// still applies the widget's default styling — this only overlays
+    /// user-defined rules.
     private func highlighted(_ text: String) -> AttributedString {
         let line = RenderedLine(runs: [
             RenderedRun(text: text, style: RunStyle())
@@ -502,9 +472,8 @@ private struct DialogWidgetView: View, Equatable {
                 EmptyView()
             } else {
                 // Local 1Hz TimelineView so ONLY the bar's time-dependent
-                // rendering re-runs each second. The rest of the dialog
-                // pane's widgets (labels / links / separators) stay
-                // frozen between data updates.
+                // rendering re-runs each second; other widgets stay frozen
+                // between data updates.
                 TimelineView(.periodic(from: .now, by: 1.0)) { context in
                     let elapsed = max(0, context.date.timeIntervalSince(dialogLastUpdated))
                     let remainingSeconds = liveRemainingSeconds(time, elapsed: elapsed)

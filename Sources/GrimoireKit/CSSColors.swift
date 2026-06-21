@@ -40,9 +40,8 @@ public enum CSSColors {
         }
     }
 
-    /// The full CSS3 / SVG named-colour table. Exposed `public` so
-    /// callers can also walk it (e.g. to build a "pick from a list"
-    /// UI later if we ever want one).
+    /// The full CSS3 / SVG named-colour table. Exposed `public` so callers can
+    /// also walk it (e.g. to build a colour-picker list).
     public static let table: [String: String] = [
         // The most-used in timers.lic profiles:
         "black":               "#000000",

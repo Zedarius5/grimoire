@@ -5,11 +5,9 @@ import Foundation
 /// render the source-ghost overlay and the hover-target ring; `PaneDragWrapper`
 /// invokes `beginDrag` / `endDrag` from its AppKit drag callbacks.
 ///
-/// A monotonically-increasing `generation` token is bundled with each drag so
-/// the 15-second fallback timeout can tell whether a later drag has already
-/// taken over (in which case the timeout is a no-op). Without it, a
-/// dropped-but-orphaned drag could leave the source pane stuck at 35% opacity
-/// indefinitely.
+/// A monotonic `generation` token guards the 15-second fallback timeout so it
+/// no-ops once a later drag has taken over — otherwise a dropped-but-orphaned
+/// drag could leave the source pane stuck at reduced opacity indefinitely.
 @MainActor
 final class PaneDragState: ObservableObject {
     @Published var draggingPaneId: String? = nil

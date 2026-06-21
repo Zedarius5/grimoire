@@ -3,10 +3,9 @@ import GrimoireKit
 
 /// Second window for managing custom highlights. Left: list of rules with
 /// an enable toggle. Right: detail editor with live preview against a
-/// canned sample paragraph so the user can see the result instantly.
-/// What's currently selected in the editor list. Polymorphic because
-/// the user can now select either an individual rule or a group, and
-/// the detail pane swaps between the two editors.
+/// canned sample paragraph.
+/// Editor list selection. Either a rule or a group; the detail pane swaps
+/// between the two editors accordingly.
 enum HighlightSelection: Hashable {
     case rule(UUID)
     case group(UUID)
@@ -20,31 +19,19 @@ struct HighlightEditorView: View {
     @State private var listKind: HighlightKind = .text
     @State private var filterText: String = ""
     @State private var sortOrder: HighlightSort = .insertion
-    /// Group ids that are collapsed in the sidebar. Default is
-    /// expanded; we track the negative because most users will leave
-    /// groups expanded most of the time.
+    /// Collapsed group ids (tracking the negative since groups default to expanded).
     @State private var collapsedGroups: Set<UUID> = []
-    /// When a new rule or group is created, the parent sets this to
-    /// the freshly-added id. The matching detail view consumes it on
-    /// `.onAppear` to immediately focus its primary text field, so
-    /// the user can just start typing the name / match text without
-    /// clicking into the field first.
+    /// Id of a freshly-created rule/group; the matching detail view consumes it
+    /// on `.onAppear` to auto-focus its primary text field.
     @State private var pendingFocusForId: UUID? = nil
 
-    /// One render's worth of list data, computed in a single pass.
+    /// One render's worth of list data, computed in a single pass so the
+    /// filter + sort over all (~900) rules runs once per render rather than
+    /// once per subview that needs a slice of it.
     ///
     /// `ordered` is the flat kind-filtered + searched + sorted list;
     /// `membersByGroup` and `ungrouped` are that same list partitioned
     /// by group affiliation. `matchCount`/`total` drive the count pill.
-    ///
-    /// This exists because the previous design read a `filteredRules`
-    /// computed property ~13 times per render (once per group header
-    /// for its count, once per group for its member ForEach, twice for
-    /// the ungrouped section, once for the count label) — each read
-    /// re-ran a full filter + sort over all ~900 rules. Building the
-    /// layout once and handing slices to the subviews collapses that to
-    /// a single pass, which is what makes selecting/filtering/toggling
-    /// in a large rule set feel snappy.
     private struct EditorLayout {
         var ordered: [Highlight] = []
         var membersByGroup: [UUID: [Highlight]] = [:]
@@ -90,8 +77,7 @@ struct HighlightEditorView: View {
             }
         }
 
-        // Surface a regression early if this ever creeps back up: the
-        // whole point is that this runs once per render and stays cheap.
+        // This must stay cheap (one pass per render); log if it ever creeps up.
         let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
         if ms > 3 {
             appLog("HighlightEditor",
@@ -106,19 +92,10 @@ struct HighlightEditorView: View {
         let lower = term.lowercased()
         if lower.hasPrefix("tag:") {
             let tag = String(lower.dropFirst(4))
-            // Tags check the rule's OWN field. Inherited values are
-            // intentionally NOT included, because the primary use case
-            // for these tags is finding explicit overrides ("which
-            // rules in this group have their own text color set when
-            // they should be inheriting?"). For "is this rule
-            // effectively bold/italic/etc?" the visual badges in the
-            // sidebar (which DO show resolved state) are the better
-            // signal.
-            //
-            // Exception: `notify` answers "which highlights WILL fire
-            // a notification?" -- that's an effective-behavior
-            // question, so it honors group inheritance (a rule in a
-            // notifying group fires even with its own flag off).
+            // Tags check the rule's OWN field, not inherited values, so they
+            // surface explicit overrides (the sidebar badges show resolved
+            // state). Exception: `notify` honors group inheritance, since it
+            // answers "which rules will actually fire a notification?".
             switch tag {
             case "regex":     return rule.usesPattern
             case "line":      return rule.entireLine
@@ -161,10 +138,8 @@ struct HighlightEditorView: View {
             handleImport(result)
         }
         .onAppear {
-            // Start every editor session with all groups collapsed, so a
-            // large grouped rule set (e.g. the per-element crit groups)
-            // opens as a compact list of group headers rather than a wall
-            // of nested rules. The user expands the ones they want.
+            // Start collapsed so a large grouped rule set opens as a compact
+            // list of group headers rather than a wall of nested rules.
             collapsedGroups = Set(store.groups.map(\.id))
             if selection == nil, let first = makeLayout().ordered.first {
                 selection = .rule(first.id)
@@ -178,8 +153,7 @@ struct HighlightEditorView: View {
     // MARK: - List
 
     private var list: some View {
-        // Single pass per render — every subview below reads from this
-        // instead of re-running the filter/sort. See `makeLayout()`.
+        // Single pass per render; subviews read from this. See `makeLayout()`.
         let layout = makeLayout()
         return VStack(spacing: 0) {
             HStack(spacing: 6) {
@@ -242,9 +216,7 @@ struct HighlightEditorView: View {
                 }
                 if !layout.ungrouped.isEmpty {
                     if !visibleGroups.isEmpty {
-                        // Soft divider between the grouped section and
-                        // the loose rules so it's visually obvious
-                        // where membership ends.
+                        // Divider between the grouped section and loose rules.
                         Text("Ungrouped")
                             .font(.caption.bold())
                             .foregroundStyle(.secondary)
@@ -274,10 +246,9 @@ struct HighlightEditorView: View {
         }
     }
 
-    /// Magnifying-glass + text field + clear-X. Plain TextField rather
-    /// than `.searchable` because the editor lives inside an HSplitView,
-    /// not a NavigationStack -- `.searchable` doesn't anchor cleanly to
-    /// the left list pane in that layout.
+    /// Plain TextField rather than `.searchable`: the editor lives in an
+    /// HSplitView (not a NavigationStack), where `.searchable` doesn't anchor
+    /// cleanly to the left list pane.
     private var filterBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
@@ -310,10 +281,8 @@ struct HighlightEditorView: View {
         }
     }
 
-    /// Group header row. Selectable like a rule, plus a chevron that
-    /// toggles expansion. Right-click offers rename/delete; rules can
-    /// also be moved into / out of the group from their own context
-    /// menu in `ruleRow`.
+    /// Group header row: selectable like a rule, with a chevron to toggle
+    /// expansion and a context menu for add/delete.
     @ViewBuilder
     private func groupHeaderRow(_ group: HighlightGroup, memberCount: Int) -> some View {
         let isExpanded = !collapsedGroups.contains(group.id)
@@ -362,10 +331,8 @@ struct HighlightEditorView: View {
         }
     }
 
-    /// Optional left-indent when shown nested under a group header.
-    /// Group reassignment is now done via the dropdown in
-    /// `HighlightDetail` (matching the spell-preset editor's pattern),
-    /// so no right-click menu is needed here.
+    /// Optional left-indent when shown nested under a group header. Group
+    /// reassignment is done via the dropdown in `HighlightDetail`, not here.
     @ViewBuilder
     private func ruleRow(_ rule: Highlight, indented: Bool) -> some View {
         let parent = rule.groupId.flatMap { gid in
@@ -387,10 +354,8 @@ struct HighlightEditorView: View {
         }
     }
 
-    /// `groupId` of the currently-selected item, if any -- used to
-    /// decide where a freshly-added rule should land. When the user
-    /// has a group (or one of its members) selected, the new rule
-    /// joins that group; otherwise it lands ungrouped.
+    /// `groupId` of the selected item; a freshly-added rule joins that group
+    /// (or lands ungrouped when nothing relevant is selected).
     private var selectedGroupId: UUID? {
         switch selection {
         case .group(let id): return id
@@ -399,8 +364,7 @@ struct HighlightEditorView: View {
         }
     }
 
-    /// Small uppercase-text pill used in the group header to indicate
-    /// disabled state. Mirrors the `badge` inside `HighlightRow`.
+    /// Small uppercase pill for the group header. Mirrors `HighlightRow.badge`.
     private func badge(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 8, weight: .bold, design: .monospaced))
@@ -413,10 +377,8 @@ struct HighlightEditorView: View {
 
     private func addRule(intoGroup groupId: UUID?) {
         filterText = ""
-        // Start with empty text so the user can just type the rule's
-        // text without first deleting boilerplate. The list row's
-        // "(no text)" placeholder + the TextField's prompt cover the
-        // visual gap until they type something.
+        // Start with empty text (the "(no text)" placeholder + field prompt
+        // cover the gap) so the user can type immediately.
         let fresh = store.add(
             Highlight(text: "", fgColor: "#FFCC66", kind: listKind, groupId: groupId)
         )
@@ -451,9 +413,8 @@ struct HighlightEditorView: View {
         .help("Sort highlights")
     }
 
-    /// Count display in the list header. Shows total-after-filtering or
-    /// `matches / total` while a filter is active so the user can tell
-    /// how much the search narrowed the set.
+    /// Count display in the list header: total, or `matches / total` while a
+    /// filter is active.
     private func countLabel(_ layout: EditorLayout) -> String {
         if filterText.isEmpty { return "\(layout.total)" }
         return "\(layout.matchCount)/\(layout.total)"
@@ -516,9 +477,8 @@ struct HighlightEditorView: View {
     private func handleImport(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result, let url = urls.first else { return }
         do {
-            // SwiftUI file importer hands back a security-scoped URL on real
-            // sandboxed builds; ad-hoc dev signing means this is a no-op, but
-            // wrapping keeps us correct under either.
+            // The file importer hands back a security-scoped URL on sandboxed
+            // builds (a no-op under ad-hoc dev signing); wrapping is correct either way.
             let didScope = url.startAccessingSecurityScopedResource()
             defer { if didScope { url.stopAccessingSecurityScopedResource() } }
             let parsed = try HighlightParser.parse(file: url)
@@ -532,11 +492,9 @@ struct HighlightEditorView: View {
     }
 }
 
-/// Order options for the highlight list. `.insertion` is the natural
-/// save-order which also happens to be the match priority order at
-/// render time -- keep it as the default so the user's mental model of
-/// "later rules win on overlap" still holds when they're not actively
-/// sorting.
+/// Order options for the highlight list. `.insertion` is the save order, which
+/// is also the render-time match priority ("later rules win on overlap"); keep
+/// it the default so that mental model holds when not actively sorting.
 enum HighlightSort: String, CaseIterable, Identifiable {
     case insertion
     case textAsc
@@ -563,9 +521,8 @@ enum HighlightSort: String, CaseIterable, Identifiable {
         case .textDesc:
             return rules.sorted { $0.text.localizedCaseInsensitiveCompare($1.text) == .orderedDescending }
         case .color:
-            // Group same-colored rules together; rules without a fg
-            // color sink to the end. Within a color, fall back to
-            // case-insensitive text order so the result is stable.
+            // Group same-colored rules together; rules with no fg color sink
+            // to the end. Within a color, text order keeps the result stable.
             return rules.sorted { a, b in
                 switch (a.fgColor, b.fgColor) {
                 case (nil, nil): return a.text.localizedCaseInsensitiveCompare(b.text) == .orderedAscending
@@ -585,24 +542,18 @@ enum HighlightSort: String, CaseIterable, Identifiable {
 // MARK: - List row
 
 /// Standalone row so SwiftUI's value-type diff can skip rows whose
-/// `Highlight` hasn't changed. Keeping this out of the parent's
-/// closure (where the previous implementation called
-/// `store.highlights.first(where:)` inside a Binding `get:`) gets rid
-/// of the O(rules²) work per re-render that made toggling a single
-/// rule visibly stall the editor at ~900 rules.
+/// `Highlight` hasn't changed; keeping it out of the parent's closure avoids
+/// O(rules²) lookups per re-render that stall the editor at large rule counts.
 ///
-/// `parentGroup` is the row's group (when nested under one) so the
-/// inline sample can render with group inheritance applied -- a rule
-/// with no own fg color inside a red group shows red in the sidebar,
-/// matching what the game feed will actually display.
+/// `parentGroup` is the row's group (when nested) so the inline sample renders
+/// with group inheritance applied, matching what the game feed will display.
 private struct HighlightRow: View {
     let rule: Highlight
     let parentGroup: HighlightGroup?
     let onToggleEnabled: (Bool) -> Void
 
-    /// Rule with group inheritance applied. Inline sample + B/I badges
-    /// read from this; CASE/WORD/REGEX/LINE badges stay on the rule's
-    /// own config since those are structural, not stylistic.
+    /// Rule with group inheritance applied. Inline sample + B/I badges read
+    /// from this; CASE/WORD/REGEX/LINE badges read the rule's own config.
     private var resolved: Highlight {
         guard let g = parentGroup else { return rule }
         return HighlightResolver.resolve([rule], groups: [g]).first ?? rule
@@ -648,9 +599,8 @@ private struct HighlightRow: View {
         HStack(spacing: 4) {
             // REGEX is rule-only (groups don't have it).
             if rule.usesPattern { badge("REGEX") }
-            // The matching/display flags reflect group inheritance so
-            // a member of an "all lines" group shows LINE in the row,
-            // matching what'll actually fire at render time.
+            // Matching/display flags reflect group inheritance, matching what
+            // fires at render time.
             if r.entireLine    { badge("LINE") }
             if r.caseSensitive { badge("CASE") }
             if r.wholeWord     { badge("WORD") }
@@ -694,17 +644,14 @@ private struct HighlightDetail: View {
     @State private var italic: Bool
     @State private var groupId: UUID?
     @State private var notify: Bool
-    /// Stash for the user's last-chosen fg / bg colors. Persisted on
-    /// the Highlight as `stashedFgColor` / `stashedBgColor` so toggling
-    /// "Text color" off doesn't destroy the user's previous pick.
+    /// Last-chosen fg / bg, persisted on the Highlight so toggling a color off
+    /// doesn't destroy the previous pick.
     @State private var stashedFgHex: String?
     @State private var stashedBgHex: String?
-    /// True when the row was deleted via the trash button. Suppresses
-    /// the `.onDisappear` flush so we don't immediately resurrect the
-    /// deleted rule by pushing the local draft back into the store.
+    /// Set when deleted via the trash button. Suppresses the `.onDisappear`
+    /// flush so the local draft doesn't resurrect the deleted rule.
     @State private var didDelete: Bool = false
-    /// Scratch input for the "Test against your own text" panel. Not
-    /// persisted; gone when the user navigates away from the row.
+    /// Scratch input for the test panel. Not persisted.
     @State private var testInput: String = ""
 
     init(rule: Highlight, store: HighlightStore, pendingFocusForId: Binding<UUID?>, onDelete: @escaping () -> Void) {
@@ -713,11 +660,8 @@ private struct HighlightDetail: View {
         self._pendingFocusForId = pendingFocusForId
         self.onDelete = onDelete
         _text          = State(initialValue: rule.text)
-        // The color picker's @State always reflects the user's last
-        // intended pick: prefer the active fg, then the stashed value,
-        // then a sensible default. So a rule with no active color but
-        // a stashed red comes up as red in the picker -- the toggle is
-        // off, but flipping it on restores the red instantly.
+        // Picker reflects the last intended pick: active fg, then stash, then
+        // default -- so flipping a disabled color toggle on restores it instantly.
         let initialFgHex = rule.fgColor ?? rule.stashedFgColor
         let initialBgHex = rule.bgColor ?? rule.stashedBgColor
         _fgColor       = State(initialValue: initialFgHex.flatMap { Color(hex: $0) } ?? .yellow)
@@ -737,7 +681,7 @@ private struct HighlightDetail: View {
         _stashedBgHex  = State(initialValue: rule.stashedBgColor ?? rule.bgColor)
     }
 
-    /// Reflects the form state without going through `store` — keeps the
+    /// Form state as a Highlight, without going through `store` — keeps the
     /// preview in sync with unsaved keystrokes.
     private var draftHighlight: Highlight {
         Highlight(
@@ -882,17 +826,13 @@ private struct HighlightDetail: View {
             Spacer()
         }
         .onChange(of: groupId) { _, _ in
-            // Group reassignment commits live (single discrete action,
-            // no per-keystroke cascade concern). This makes the
-            // sidebar reflect the move the instant the user picks a
-            // new group from the dropdown, mirroring the spell-preset
-            // editor's behavior.
+            // Group reassignment commits live: a single discrete action with
+            // no per-keystroke cascade, so the sidebar reflects the move at once.
             store.update(draftHighlight)
         }
         .onAppear {
-            // When this rule was just created via "+ New highlight",
-            // jump straight to typing the match text. Dispatched so
-            // the field has finished mounting before we try to focus.
+            // Auto-focus the match field for a just-created rule. Dispatched so
+            // the field has mounted before we focus.
             if pendingFocusForId == rule.id {
                 pendingFocusForId = nil
                 DispatchQueue.main.async {
@@ -901,15 +841,10 @@ private struct HighlightDetail: View {
             }
         }
         .onDisappear {
-            // Modal commit for the rest of the form: the draft only
-            // propagates into the store when this view leaves the
-            // hierarchy (selection change, editor window close, app
-            // quit). Until then every edit is local @State and the
-            // rest of the app sees the prior committed value -- this
-            // is what eliminates the per-keystroke @Published cascade.
-            //
-            // Skip the flush when the user just hit Delete; otherwise
-            // the local draft would resurrect the row we just removed.
+            // Modal commit: edits stay local @State and only propagate to the
+            // store when this view leaves the hierarchy, which avoids a
+            // per-keystroke @Published cascade through the engine.
+            // Skip the flush after a delete, or the draft would resurrect the row.
             guard !didDelete else { return }
             guard let current = store.highlights.first(where: { $0.id == rule.id }) else { return }
             if current != draftHighlight {
@@ -924,22 +859,16 @@ private struct HighlightDetail: View {
             : "e.g. greedy gremlins"
     }
 
-    /// Live-validates the current pattern. Returns true for non-regex
-    /// rules and for empty-text regex rules; only flags actual ICU
-    /// compile failures so the user knows their pattern won't match.
-    /// Sub-µs per call -- NSRegularExpression compile is fast and the
-    /// HighlightProcessor cache catches repeated valid patterns anyway.
+    /// Live-validates the current pattern. True for non-regex and empty-text
+    /// regex rules; only flags actual ICU compile failures.
     private var patternIsValid: Bool {
         guard usesPattern, !text.isEmpty else { return true }
         return (try? NSRegularExpression(pattern: text)) != nil
     }
 
-    /// Toggle that respects group inheritance: when the assigned
-    /// group provides the same flag, the toggle is disabled and
-    /// shown ON (so the user sees the effective state) with a
-    /// tooltip explaining where it comes from. The rule's own
-    /// underlying `@State` is preserved -- if the rule is later
-    /// moved out of the group, its original setting comes back.
+    /// Toggle that respects group inheritance: when the group provides the
+    /// flag, the toggle is disabled and shown ON (the effective state), while
+    /// the rule's own @State is preserved for if it later leaves the group.
     private func inheritedToggle(
         _ title: String,
         isOn: Binding<Bool>,
@@ -949,11 +878,8 @@ private struct HighlightDetail: View {
         let display = Binding<Bool>(
             get: { isOn.wrappedValue || inherited },
             set: { newValue in
-                // Only writes through when NOT inherited -- when the
-                // group already provides this, the toggle is disabled
-                // and any set is a no-op anyway, but keep it
-                // defensive in case AppKit fires set() on a disabled
-                // control during some state transition.
+                // Write through only when not inherited; defensive against
+                // AppKit firing set() on the disabled control.
                 if !inherited { isOn.wrappedValue = newValue }
             }
         )
@@ -964,14 +890,10 @@ private struct HighlightDetail: View {
                   : "")
     }
 
-    /// Stash-aware color row. Toggling OFF moves the current color
-    /// into the stash before clearing the active field; toggling ON
-    /// restores from the stash (falling back to the picker's current
-    /// `Color` when no stash exists). Dragging the picker keeps the
-    /// stash in sync so the user's most recent pick is always what
-    /// comes back on the next toggle-on. The stash is persisted on
-    /// the Highlight (`stashedFgColor` / `stashedBgColor`), so this
-    /// works across app restarts.
+    /// Stash-aware color row. Toggling OFF stashes the current color before
+    /// clearing the active field; toggling ON restores it. Dragging the picker
+    /// keeps the stash in sync. The stash persists on the Highlight, so this
+    /// survives app restarts.
     private func colorRow(
         title: String,
         isOn: Binding<Bool>,
@@ -1007,12 +929,10 @@ private struct HighlightDetail: View {
         }
     }
 
-    /// Test-panel renderer. Builds an AttributedString directly from
-    /// the processor's output -- we deliberately avoid StoryTextView
-    /// here because its reconcile path is optimized for the append-only
-    /// game feed (revision-counter based) and silently drops updates
-    /// when an existing line's text content mutates without the line
-    /// count changing.
+    /// Test-panel renderer. Builds an AttributedString directly rather than
+    /// using StoryTextView, whose revision-counter reconcile is tuned for the
+    /// append-only feed and drops updates when a line's text mutates without
+    /// the line count changing.
     private var testResultBlock: some View {
         Text(testResultAttributed)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1023,18 +943,15 @@ private struct HighlightDetail: View {
             .textSelection(.enabled)
     }
 
-    /// Draft rule with group-level styling merged in. The test pane
-    /// has to honor inheritance just like the live renderer does --
-    /// without this, a rule that inherits its color from a group
-    /// (own fg unset) would render as plain text in the test pane and
-    /// the counter would report "no match" because there'd be nothing
-    /// styled to count, even when the regex genuinely matched.
+    /// Draft rule with group-level styling merged in. The test pane must honor
+    /// inheritance like the live renderer; otherwise a rule inheriting its
+    /// color from a group renders plain and the counter falsely reports "no match".
     private var resolvedTestRule: Highlight {
         guard let g = parentGroup else { return draftHighlight }
         return HighlightResolver.resolve([draftHighlight], groups: [g]).first ?? draftHighlight
     }
 
-    /// Runs the resolved draft rule over `testInput` and returns an
+    /// Runs the resolved draft rule over `testInput`, returning an
     /// AttributedString with highlight colors / bold / italic applied
     /// run-by-run. Multi-line input keeps its line breaks.
     private var testResultAttributed: AttributedString {
@@ -1067,21 +984,14 @@ private struct HighlightDetail: View {
         return out
     }
 
-    /// Counts contiguous highlighted regions in `testInput` after the
-    /// resolved draft rule is applied. Uses the real `HighlightProcessor`
-    /// so the count is byte-identical to what would fire in the live
-    /// game feed (including regex compile failures returning zero).
+    /// Counts contiguous highlighted regions in `testInput`, using the real
+    /// `HighlightProcessor` so the count matches the live feed (including
+    /// regex compile failures counting as zero).
     ///
-    /// Two important details:
-    /// - Group inheritance is applied (via `resolvedTestRule`) before
-    ///   counting, so a rule that gets its color from a group still
-    ///   registers matches.
-    /// - When the resolved rule has no visible styling at all (nothing
-    ///   to mark a match with), a sentinel fg color is force-applied
-    ///   just for the counter so the answer to "did my regex match?"
-    ///   doesn't depend on whether the user has any styling configured.
-    ///   The sentinel doesn't reach the visual render -- that uses
-    ///   `resolvedTestRule` directly.
+    /// Group inheritance is applied via `resolvedTestRule` so a rule colored
+    /// by its group still registers. When the resolved rule has no visible
+    /// styling, a sentinel fg is force-applied for counting only (not the
+    /// visual render) so "did my regex match?" doesn't depend on configured styling.
     private var testMatchCount: Int {
         guard !testInput.isEmpty else { return 0 }
         var ruleForCounting = resolvedTestRule
@@ -1116,16 +1026,11 @@ private struct HighlightDetail: View {
         }
     }
 
-    /// Renders a canned sample paragraph through the very same NSTextView
-    /// pipeline the live game feed uses, with this draft rule pinned in.
-    /// Using the real renderer means the preview is byte-identical to what
-    /// the user sees in-game — no parallel rendering path to keep in sync.
-    ///
-    /// Reads `draftHighlight` directly: with the modal-commit pattern the
-    /// rest of the app no longer cascades on each keystroke, so paying
-    /// for the StoryTextView reconcile per keystroke is fine -- it stays
-    /// local to this view and the rebuild for ~6 sample lines plus one
-    /// rule is sub-ms.
+    /// Renders a canned sample through the same NSTextView pipeline the live
+    /// feed uses, with this draft rule pinned in, so the preview is
+    /// byte-identical to in-game with no parallel rendering path to keep in sync.
+    /// Reads `draftHighlight` directly; the per-keystroke reconcile stays local
+    /// to this view and is sub-ms for a handful of sample lines.
     private var previewBlock: some View {
         let draft = draftHighlight
         let sampleLines = HighlightPreviewSamples.lines(featuring: draft.text)
@@ -1145,10 +1050,9 @@ private struct HighlightDetail: View {
 
 // MARK: - Group detail
 
-/// Edits a `HighlightGroup`'s name, default colors, trait additions,
-/// enabled/notify toggles. Modal-commit on disappear, matching the
-/// pattern in `HighlightDetail` so typing into the name doesn't
-/// cascade through the engine.
+/// Edits a `HighlightGroup`'s name, default colors, trait additions, and
+/// enabled/notify toggles. Modal-commit on disappear (like `HighlightDetail`)
+/// so typing doesn't cascade through the engine.
 private struct HighlightGroupDetail: View {
     let group: HighlightGroup
     let store: HighlightStore
@@ -1178,9 +1082,8 @@ private struct HighlightGroupDetail: View {
         self._pendingFocusForId = pendingFocusForId
         self.onDelete = onDelete
         _name      = State(initialValue: group.name)
-        // Prefer active color, then stash, then default. Lets the
-        // picker show the user's intended pick even when the toggle
-        // is off, so toggling on restores it instantly.
+        // Active color, then stash, then default -- so flipping a disabled
+        // toggle on restores the intended pick.
         let initialFgHex = group.fgColor ?? group.stashedFgColor
         let initialBgHex = group.bgColor ?? group.stashedBgColor
         _fgColor   = State(initialValue: initialFgHex.flatMap { Color(hex: $0) } ?? .yellow)
@@ -1286,9 +1189,8 @@ private struct HighlightGroupDetail: View {
             }
         }
         .onAppear {
-            // Auto-focus the Name field when this group was just
-            // created via "+ New group". Dispatched so the field is
-            // mounted before we try to focus.
+            // Auto-focus the Name field for a just-created group. Dispatched so
+            // the field has mounted before we focus.
             if pendingFocusForId == group.id {
                 pendingFocusForId = nil
                 DispatchQueue.main.async {
@@ -1298,8 +1200,7 @@ private struct HighlightGroupDetail: View {
         }
     }
 
-    /// Same stash-aware color row pattern as the rule detail uses;
-    /// see the equivalent in `HighlightDetail` for the rationale.
+    /// Stash-aware color row; see `HighlightDetail.colorRow` for the rationale.
     private func colorRow(
         title: String,
         isOn: Binding<Bool>,
@@ -1336,9 +1237,8 @@ private struct HighlightGroupDetail: View {
     }
 }
 
-/// Canned sample lines used by the editor's preview. Includes the user's
-/// current match text so they can see their rule fire even before typing it
-/// into the game.
+/// Canned sample lines for the editor's preview. Appends the current match
+/// text so the rule visibly fires before it's typed into the game.
 private enum HighlightPreviewSamples {
     static func lines(featuring search: String) -> [RenderedLine] {
         var base: [String] = [

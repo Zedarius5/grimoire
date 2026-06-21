@@ -2,14 +2,11 @@ import Foundation
 
 /// Reads Lich's cached effect/spell database (`~/Gemstone/data/effect-list.xml`)
 /// to translate Stormfront spell numbers like `709` into human-readable
-/// names like `Grasp of the Dead`. Same data source the Lich runtime
-/// uses for `Spell[709].name`, so any spell the user has seen in their
-/// Lich install is automatically named in Grimoire — even when the game
-/// isn't currently running.
+/// names like `Grasp of the Dead`. Any spell the user has seen in their
+/// Lich install is named in Grimoire even when the game isn't running.
 ///
-/// Re-reads at startup; if Lich refreshes the cache while Grimoire is
-/// open the user can call `reload()` (e.g. from a future "Refresh"
-/// button) to pick up additions.
+/// Re-reads at startup; call `reload()` to pick up cache additions Lich
+/// makes while Grimoire is open.
 public final class SpellNameDatabase: @unchecked Sendable {
 
     /// Process-wide instance. Both `LichClient`'s stream parser (which
@@ -33,11 +30,9 @@ public final class SpellNameDatabase: @unchecked Sendable {
     /// `false` for test instances built with a custom path — we don't
     /// want unit tests polluting the user's persisted observed cache.
     private let persistsObserved: Bool
-    /// Coalesces `record(id:name:)` writes so we don't synchronously
-    /// hit `UserDefaults` (and the notification post it triggers) on
-    /// every parsed `<progressBar>`. Sampling showed that path
-    /// dominated the LichClient parsing thread once the user had
-    /// played long enough to start seeing new cooldown ids.
+    /// Coalesces `record(id:name:)` writes so we don't synchronously hit
+    /// `UserDefaults` (and the notification post it triggers) on every
+    /// parsed `<progressBar>`, which would dominate the parsing thread.
     private var persistPending = false
     private let persistDelay: TimeInterval = 2.0
     private let persistQueue = DispatchQueue(
@@ -84,13 +79,11 @@ public final class SpellNameDatabase: @unchecked Sendable {
 
     /// Record a name Grimoire just saw for `id` in a live `<progressBar>`.
     /// Idempotent — only schedules a persist when the value actually
-    /// changed. Persistence runs on a background queue with a
-    /// debounce window so a burst of progressBar updates coalesces
-    /// into a single write to `UserDefaults` instead of one per
-    /// parsed tag (which was costing half the parser's CPU because
-    /// each write synchronously posted `NSUserDefaultsDidChange`).
-    /// Refuses to record when name equals id (the server sometimes
-    /// echoes the id as text for unnamed timers).
+    /// changed. Persistence is debounced on a background queue so a burst
+    /// of updates coalesces into a single `UserDefaults` write (each write
+    /// synchronously posts `NSUserDefaultsDidChange`). Refuses to record
+    /// when name equals id (the server echoes the id as text for unnamed
+    /// timers).
     public func record(id: String, name: String) {
         guard !id.isEmpty, !name.isEmpty, id != name else { return }
         lock.lock()

@@ -63,15 +63,11 @@ struct CommandTextField: NSViewRepresentable {
         field.customInsertionPointColor = insertionPointColor
         context.coordinator.parent = self
 
-        // Two paths to grab focus:
-        //   1. `shouldFocus` changed to true while the field was already
-        //      eligible — normal SwiftUI-driven case.
-        //   2. The field just transitioned from disabled → enabled (i.e.
-        //      `client.isActive` became true after a successful connect).
-        //      The connect button steals first-responder; we need to
-        //      reclaim it the instant the field becomes eligible, since
-        //      `focused = true` was already set during `.onAppear` and
-        //      setting it again is a no-op.
+        // Grab focus when either `shouldFocus` is set, or the field just
+        // transitioned disabled → enabled (client became active after
+        // connect). In the latter case `focused` was already set in
+        // `.onAppear`, so setting it again is a no-op — we must reclaim
+        // first-responder here, the instant the field becomes eligible.
         let justEnabled = !wasEnabled && isEnabled
         if (shouldFocus || justEnabled),
            field.window?.firstResponder !== field.currentEditor() {
@@ -170,17 +166,16 @@ final class CommandNSTextField: NSTextField {
 
     private var focusObservers: [NSObjectProtocol] = []
     private var clickMonitor: Any?
-    /// The read-only pane (story feed / stream pane) we most recently
-    /// stole first-responder status from. Its text selection survives
-    /// the steal (drawn inactive-gray), but Cmd+C routes to *us* — so
-    /// `performKeyEquivalent` consults this view to copy the selection
-    /// the user actually made. Weak: panes get remounted by SwiftUI.
+    /// The read-only pane we most recently stole first-responder status
+    /// from. Its text selection survives the steal, but Cmd+C routes to
+    /// *us* — so `performKeyEquivalent` consults this view to copy the
+    /// selection the user made. Weak: panes get remounted by SwiftUI.
     private weak var lastSelectionSource: NSTextView?
 
-    // No deinit cleanup — NSNotificationCenter holds observer tokens for
-    // the lifetime of this object, and AppKit views aren't normally torn
-    // down before the app exits anyway. Avoiding a deinit sidesteps Swift
-    // 6's `cannot access non-Sendable property from nonisolated deinit`.
+    // No deinit cleanup — observer tokens live for the lifetime of this
+    // object and AppKit views aren't torn down before app exit anyway.
+    // Avoiding a deinit also sidesteps Swift 6's "cannot access
+    // non-Sendable property from nonisolated deinit".
 
     /// Kills the Cut/Copy/Paste/Writing Tools menu that macOS pops up on
     /// Ctrl+Return (and right-click) inside an NSTextField.
@@ -205,15 +200,13 @@ final class CommandNSTextField: NSTextField {
             && event.charactersIgnoringModifiers?.lowercased() == "c"
     }
 
-    /// Cmd+C fallthrough for the sticky-focus world: the input field
-    /// holds first-responder status ~always, so a selection the user
-    /// dragged out in a read-only pane can never receive the Copy
-    /// action through the responder chain (Edit > Copy validates
-    /// against our empty field editor and disables itself). When the
-    /// input has no selection of its own, copy the pane selection we
-    /// stole focus from instead. Returns false (deferring to normal
-    /// handling) whenever the input — or any other field — has a real
-    /// selection or focus of its own.
+    /// Cmd+C fallthrough for sticky focus: the input holds first-responder
+    /// status ~always, so a selection in a read-only pane can never receive
+    /// the Copy action through the responder chain (Edit > Copy validates
+    /// against our empty field editor and disables itself). When the input
+    /// has no selection of its own, copy the stashed pane selection instead.
+    /// Returns false (deferring to normal handling) when the input — or any
+    /// other field — has a real selection or focus of its own.
     private func copyPaneSelection() -> Bool {
         guard let win = window,
               let editor = currentEditor(),
@@ -223,8 +216,8 @@ final class CommandNSTextField: NSTextField {
               pane.window === win,
               pane.selectedRange().length > 0
         else { return false }
-        // NSTextView.copy(_:) writes the selected range to the general
-        // pasteboard directly — no first-responder status required.
+        // NSTextView.copy(_:) writes the selection to the pasteboard
+        // directly — no first-responder status required.
         pane.copy(nil)
         return true
     }
@@ -263,19 +256,17 @@ final class CommandNSTextField: NSTextField {
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                // `addObserver`'s closure is typed @Sendable, but
-                // `queue: .main` means it actually fires on main —
-                // assert that so we can touch main-actor state directly.
+                // `queue: .main` guarantees this fires on main despite the
+                // @Sendable closure type, so touch main-actor state directly.
                 MainActor.assumeIsolated {
                     self?.reclaimFocus()
                 }
             }
         )
 
-        // Application-level becomeActive is more reliable than per-window
-        // didBecomeKey on Cmd-Tab — sometimes AppKit re-sets the first
-        // responder after the per-window event fires. Catching both
-        // covers the cases where one or the other misses.
+        // Observe app-level becomeActive too: on Cmd-Tab, AppKit sometimes
+        // re-sets the first responder after the per-window didBecomeKey
+        // fires, so catching both covers cases where one misses.
         focusObservers.append(
             NotificationCenter.default.addObserver(
                 forName: NSApplication.didBecomeActiveNotification,
@@ -288,11 +279,9 @@ final class CommandNSTextField: NSTextField {
             }
         )
 
-        // Window-level click monitor: any mouse-down in this window
-        // ends up routing focus back to the input, EXCEPT when the
-        // click landed on another editable text editor (highlight
-        // editor's match-text field, connect form, etc.). Cheap --
-        // runs after the click is processed so links / selection still
+        // Window-level click monitor: any mouse-down routes focus back to
+        // the input, EXCEPT when the click landed on another editable text
+        // editor. Runs after the click is processed so links / selection
         // work first, then we reclaim.
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             guard let self, event.window === self.window else { return event }
@@ -369,13 +358,10 @@ final class CommandNSTextField: NSTextField {
     private func applyInsertionPointColor() {
         guard let editor = currentEditor() as? NSTextView else { return }
         editor.insertionPointColor = customInsertionPointColor
-        // Field editors inherit selection styling from the field's
-        // backgroundColor + appearance. With `drawsBackground = false`
-        // and a clear backgroundColor (so the dark game-theme shows
-        // through), macOS 26 ends up drawing the selection rect at
-        // ~0 alpha — selected text looks invisible against the dark
-        // background. Re-asserting the system selection colours here
-        // makes the highlight legible without disturbing anything else.
+        // With `drawsBackground = false` and a clear backgroundColor (so the
+        // dark theme shows through), AppKit draws the selection rect at ~0
+        // alpha — selected text looks invisible. Re-assert the system
+        // selection colours so the highlight stays legible.
         editor.selectedTextAttributes = [
             .backgroundColor: NSColor.selectedTextBackgroundColor,
             .foregroundColor: NSColor.selectedTextColor

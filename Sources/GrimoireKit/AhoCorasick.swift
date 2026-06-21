@@ -1,19 +1,16 @@
 import Foundation
 
-/// Minimal Aho-Corasick multi-substring matcher used as a *presence gate*
-/// for `HighlightProcessor`. Built once per rule set, it answers "which of
-/// these N needles occur anywhere in this line?" in a single O(lineLength)
-/// pass — instead of N separate substring scans.
+/// Minimal Aho-Corasick multi-substring matcher used as a presence gate for
+/// `HighlightProcessor`. Built once per rule set, it answers "which of these N
+/// needles occur in this line?" in one O(lineLength) pass instead of N scans.
 ///
-/// It only reports *presence* (the set of needle ids that occur), not
-/// positions: the gate's job is to prune which highlight rules the exact
-/// matcher needs to run, and that matcher re-derives positions itself.
+/// It reports only presence (the set of needle ids), not positions; the exact
+/// matcher re-derives positions itself.
 ///
-/// Matching is case-sensitive at this layer; callers lower-case both the
-/// needles and the search text to get case-insensitive behavior. ASCII
-/// case-folding is identical between Swift and Foundation, so this stays
-/// in lock-step with the `NSString` substring search the exact matcher
-/// uses (non-ASCII rules are handled by the caller, not gated here).
+/// Matching is case-sensitive here; callers lower-case both needles and search
+/// text for case-insensitive behavior. ASCII case-folding is identical between
+/// Swift and Foundation, so this stays in lock-step with the `NSString`
+/// substring search (non-ASCII rules are handled by the caller, not gated here).
 final class AhoCorasick {
 
     private final class Node {

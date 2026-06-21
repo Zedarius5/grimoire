@@ -25,12 +25,8 @@ struct StoryTextView: NSViewRepresentable {
     @Environment(\.fontSize) private var fontSize
 
     func makeNSView(context: Context) -> NSScrollView {
-        // Breadcrumb: SwiftUI is creating a fresh NSScrollView/NSTextView
-        // pair. Should happen ONCE per pane mount; if you see this fire
-        // during normal gameplay it means a parent view dropped+remounted
-        // us (the most common cause is an if/else branch that swaps the
-        // view in/out -- see the ZStack overlay pattern in ContentView).
-        // Scroll position resets to y=0 here by definition.
+        // Should happen once per pane mount; firing during gameplay means a
+        // parent view dropped+remounted us, which resets scroll to y=0.
         appLog("StoryTextView", "makeNSView: creating fresh NSTextView", level: .info)
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
@@ -38,17 +34,15 @@ struct StoryTextView: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
 
-        // TextKit 1 (NSLayoutManager), not TextKit 2 (NSTextLayoutManager).
-        // TextKit 2 walks every paragraph synchronously on each viewport
-        // layout query (`_estimatedTextLocationForVerticalOffset:`), which
-        // wedges the main thread for tens of seconds once the feed has a
-        // few thousand lines. TextKit 1's flat layout-fragment cache makes
-        // those queries O(log n) and stays responsive under bursty appends.
+        // TextKit 1 (NSLayoutManager), not TextKit 2. TextKit 2 walks every
+        // paragraph synchronously on each viewport layout query, wedging the
+        // main thread for tens of seconds once the feed has a few thousand
+        // lines; TextKit 1's flat layout-fragment cache keeps those queries
+        // O(log n) under bursty appends.
         let textView = PaneTextView(usingTextLayoutManager: false)
         // Swap in a layout manager that trims trailing whitespace from
-        // highlight background fills, so a match like "fat palm rat"
-        // that wraps after "fat" doesn't paint a box past the last
-        // visible glyph on the upper line.
+        // highlight background fills, so a match that wraps mid-phrase doesn't
+        // paint a box past the last visible glyph on the upper line.
         if let oldLM = textView.layoutManager,
            let container = textView.textContainer,
            let storage = textView.textStorage {
@@ -78,24 +72,18 @@ struct StoryTextView: NSViewRepresentable {
         textView.drawsBackground = false
         textView.backgroundColor = .clear
         textView.textContainerInset = NSSize(width: 14, height: 10)
-        // Hide the NSTextView from the system accessibility tree.
-        // Every `.link` attribute in the storage becomes an
-        // `NSAccessibilityTextLink` child element automatically; with
-        // thousands of lines and multiple links each, macOS's
-        // navigation-order merge sort (`__AXNavigationOrderCompareUIElementFrames`)
-        // calls grind the main thread for ~10s at a time whenever any
-        // a11y hit-test fires (VoiceOver, Hover Text, Accessibility
-        // Inspector, etc.). Marking the text view as a non-element
-        // removes its whole subtree from the sort. Mouse-click link
-        // dispatch still works because the link attribute is intact —
-        // we just don't surface the per-link a11y elements.
+        // Hide the NSTextView from the system accessibility tree. Every
+        // `.link` attribute becomes an `NSAccessibilityTextLink` child; with
+        // thousands of links, macOS's navigation-order sort grinds the main
+        // thread for ~10s whenever an a11y hit-test fires. Marking the view a
+        // non-element removes its whole subtree from the sort. Mouse-click
+        // link dispatch still works because the link attribute is intact.
         textView.setAccessibilityElement(false)
         textView.setAccessibilityChildren([])
         // Override NSTextView's default link styling so our per-run colours
-        // (teal entity, green direction) and underline stay authoritative.
-        // We deliberately *omit* `.foregroundColor` here — providing any
-        // value would override the source attributes uniformly across all
-        // links. Without the key, source attributes win.
+        // and underline stay authoritative. Deliberately omit
+        // `.foregroundColor` — providing any value would uniformly override
+        // the source attributes across all links; without the key, they win.
         textView.linkTextAttributes = [
             .cursor: NSCursor.pointingHand
         ]
@@ -134,22 +122,19 @@ struct StoryTextView: NSViewRepresentable {
         private var appliedFontSize: Double = 0
         private var appliedHighlightHash: Int = 0
         /// True between scheduling and execution of an async
-        /// scroll-to-bottom hop. Coalesces back-to-back reconciles so
-        /// we don't call `scrollRangeToVisible` once per batch — that
-        /// AppKit path forces glyph layout each time and was costing
-        /// ~10% of main-thread CPU under busy game traffic.
+        /// scroll-to-bottom hop. Coalesces back-to-back reconciles so we
+        /// don't call `scrollRangeToVisible` per batch — that AppKit path
+        /// forces glyph layout each time and is costly under busy traffic.
         private var scrollToBottomScheduled: Bool = false
-        /// Last known good scroll-y while the window was key. Used to
-        /// restore position on `NSWindow.didBecomeKeyNotification`
-        /// because AppKit sometimes resets the clipView's bounds.origin
-        /// to (0,0) during the key-state transition, scrolling the
-        /// user to the top of the doc on Cmd-Tab back.
+        /// Last known good scroll-y while the window was key. Restored on
+        /// `NSWindow.didBecomeKeyNotification` because AppKit sometimes resets
+        /// the clipView's bounds.origin to (0,0) during the key-state
+        /// transition, scrolling the user to the top on Cmd-Tab back.
         private var lastKnownScrollY: CGFloat? = nil
-        /// Whether the user was parked at the bottom the last time we
-        /// observed scroll state. If true, becomeKey re-fires
-        /// scrollToBottom (so any new content that arrived while
-        /// backgrounded gets brought into view) instead of restoring
-        /// the absolute y-offset.
+        /// Whether the user was parked at the bottom at the last observe. If
+        /// true, becomeKey re-fires scrollToBottom (bringing any content that
+        /// arrived while backgrounded into view) instead of restoring the
+        /// absolute y-offset.
         private var wasAtBottomAtLastObserve: Bool = true
 
         /// True while the user is actively dragging the scroll thumb or
@@ -185,8 +170,7 @@ struct StoryTextView: NSViewRepresentable {
                 wasAtBottomAtLastObserve = isAtBottom
             }
             let started = CFAbsoluteTimeGetCurrent()
-            // Pre-reconcile scroll snapshot — captures any "blank zone"
-            // state (gap < 0) before our mutations.
+            // Pre-reconcile scroll snapshot, captured before our mutations.
             let preState = captureScrollState()
 
             var hasher = Hasher()
@@ -197,12 +181,11 @@ struct StoryTextView: NSViewRepresentable {
             let highlightsChanged = appliedHighlightHash != highlightHash
             let structuralChange = fontChanged || highlightsChanged
 
-            // `newSinceApplied` is the source of truth for "how many new
-            // lines arrived since we last reconciled." Using this rather
-            // than `lines.count - appliedLineCount` is what makes the
-            // at-cap path work — once a stream is pinned at its cap,
-            // `lines.count` stops changing but `revision` keeps climbing
-            // by exactly the number of appends per batch.
+            // Source of truth for "how many new lines arrived since the last
+            // reconcile." Using revision rather than `lines.count -
+            // appliedLineCount` is what makes the at-cap path work: once a
+            // stream is pinned at cap, `lines.count` stops changing but
+            // `revision` keeps climbing by the number of appends per batch.
             let newSinceApplied = revision - appliedRevision
 
             let wasAtBottom = isAtBottom
@@ -219,11 +202,8 @@ struct StoryTextView: NSViewRepresentable {
                 || newSinceApplied < 0
                 || newSinceApplied > lines.count
 
-            // Per-phase timings — captured so we can see whether the
-            // "blank for a second" symptom correlates with a slow build,
-            // a slow append, or a slow front-trim. Each phase invalidates
-            // layout in the text manager independently, so any phase
-            // taking >5ms is suspicious.
+            // Per-phase timings for diagnostics. Each phase invalidates
+            // layout independently, so any phase over 5ms is worth logging.
             var buildMs: Double = 0
             var appendMs: Double = 0
             var trimMs: Double = 0
@@ -298,14 +278,12 @@ struct StoryTextView: NSViewRepresentable {
             appliedFontSize = fontSize
             appliedHighlightHash = highlightHash
 
-            // Force layout for just the currently-visible region. Storage
-            // mutations invalidate NSLayoutManager's glyph cache for the
-            // affected range; if the display cycle fires before AppKit
-            // lazy-lays-out those glyphs, the unfilled range paints as
-            // pane background — the "black holes inside the visible
-            // story" symptom that shows up around big container/INV
-            // dumps. Bounded by `visibleRect` so the cost is one
-            // screenful of layout, not the whole buffer.
+            // Force layout for just the visible region. Storage mutations
+            // invalidate NSLayoutManager's glyph cache; if the display cycle
+            // fires before AppKit lazily lays those glyphs out, the unfilled
+            // range paints as pane background (black holes in the story).
+            // Bounded by `visibleRect` so the cost is one screenful, not the
+            // whole buffer.
             if let layoutManager = textView.layoutManager,
                let container = textView.textContainer {
                 layoutManager.ensureLayout(
@@ -314,10 +292,9 @@ struct StoryTextView: NSViewRepresentable {
                 )
             }
 
-            // Suppress auto-scroll while the user is actively dragging the
-            // scroll thumb, or in the 400ms after they release. Without
-            // this, a burst of lines mid-drag yanks the view to the bottom
-            // and the user can't escape the auto-follow to read history.
+            // Suppress auto-scroll while the user is dragging the scroll thumb,
+            // or in the 400ms after they release, so a burst of lines mid-drag
+            // doesn't yank them away from history.
             let userScrolledRecently = userScrolling
                 || Date().timeIntervalSince(lastUserScrollEndedAt) < 0.4
 
@@ -335,11 +312,9 @@ struct StoryTextView: NSViewRepresentable {
 
             let elapsed = CFAbsoluteTimeGetCurrent() - started
             Diagnostics.shared.recordReconcile(durationMs: elapsed * 1000)
-            // Log when total reconcile is slow, when we did a structural
-            // rebuild, OR when any single phase exceeded 5ms — the
-            // last condition is what catches the "blank for a second"
-            // suspect: a long append or trim that holds the layout
-            // manager mid-state across a display refresh.
+            // Log when the reconcile is slow, did a structural rebuild, or any
+            // single phase exceeded 5ms (a long append/trim that holds the
+            // layout manager mid-state across a display refresh).
             let anyPhaseSlow = buildMs > 5 || appendMs > 5 || trimMs > 5
             if elapsed > 0.1 || didStructuralRebuild || anyPhaseSlow {
                 appLog(
@@ -354,15 +329,11 @@ struct StoryTextView: NSViewRepresentable {
                 )
             }
 
-            // Blank-screen diagnostic: log when the *pre*-state already
-            // shows a negative gap (clip past the doc — the suspected
-            // "blank zone"). We deliberately don't capture a post-state
-            // here: `captureScrollState()` reads `doc.frame.height`,
-            // which on a just-mutated NSTextView forces a full
-            // re-layout of the storage (hundreds of ms once the buffer
-            // hits cap). The blank-screen investigation that justified
-            // the cost is closed, so the per-reconcile capture is now
-            // pure overhead.
+            // Log only when the pre-state shows a negative gap (clip past the
+            // doc). Deliberately no post-state capture: `captureScrollState()`
+            // reads `doc.frame.height`, which on a just-mutated NSTextView
+            // forces a full re-layout (hundreds of ms once the buffer is at
+            // cap), so a per-reconcile post-capture would be pure overhead.
             if (preState?.gap ?? 0) < -1, let p = preState {
                 appLog("StoryTextView", p.description("pre "), level: .info)
             }
@@ -372,15 +343,12 @@ struct StoryTextView: NSViewRepresentable {
         /// matching entries from `lineCharLengths`, returning the trim's
         /// runtime in ms for diagnostic logging.
         ///
-        /// When `preserveVisibleScroll` is true (the user has scrolled up
-        /// to read history), measure the height of the to-be-removed
-        /// prefix BEFORE deleting and subtract it from the clip view's
-        /// `bounds.origin.y` AFTER deleting, so the visible content
-        /// doesn't shift. Without this, every front-trim at cap causes
-        /// the user's reading position to slide upward as new lines push
-        /// the cap forward. When the user is at bottom we skip the
-        /// compensation — the existing scrollToBottom path keeps them
-        /// pinned to the tail and applying a delta would fight it.
+        /// When `preserveVisibleScroll` is true (the user has scrolled up to
+        /// read history), measure the removed prefix's height before deleting
+        /// and subtract it from the clip view's `bounds.origin.y` after, so the
+        /// visible content doesn't slide upward as the cap moves forward. When
+        /// the user is at bottom we skip the compensation — the scrollToBottom
+        /// path keeps them pinned and a delta would fight it.
         private func frontTrim(
             lineCount: Int,
             storage: NSTextStorage,
@@ -403,10 +371,9 @@ struct StoryTextView: NSViewRepresentable {
                     forCharacterRange: charRange,
                     actualCharacterRange: nil
                 )
-                // Ensure the about-to-be-removed glyphs are laid out so the
-                // boundingRect we read back reflects their true height.
-                // Bounded by `charsToRemove` (one batch's worth of lines),
-                // so the cost is small even at cap.
+                // Lay out the about-to-be-removed glyphs so boundingRect
+                // reflects their true height. Bounded by `charsToRemove` (one
+                // batch's worth of lines), so the cost is small even at cap.
                 lm.ensureLayout(forGlyphRange: glyphRange)
                 removedHeight = lm.boundingRect(
                     forGlyphRange: glyphRange,
@@ -436,10 +403,8 @@ struct StoryTextView: NSViewRepresentable {
             return (doc.frame.height - clipBottom) <= bottomThreshold
         }
 
-        /// Snapshot of the scroll/clip geometry. Used by the blank-screen
-        /// diagnostic — when `gap` is negative the clip view is showing
-        /// space *past* the document's bottom edge, which is the
-        /// suspected cause of the "story goes blank for a second" symptom.
+        /// Snapshot of the scroll/clip geometry. A negative `gap` means the
+        /// clip view is showing space past the document's bottom edge.
         private struct ScrollState {
             var scrollY: CGFloat
             var clipH: CGFloat
@@ -465,11 +430,9 @@ struct StoryTextView: NSViewRepresentable {
         }
 
         /// Snapshot of the layout manager's progress vs the storage and the
-        /// visible region. The "black for a second" hypothesis is that
-        /// `firstUnlaidCharacterIndex < visibleCharRange.upperBound` at the
-        /// moment AppKit draws — i.e. the visible bottom is past the layout
-        /// frontier, so glyphs aren't generated and the background is what
-        /// gets drawn.
+        /// visible region. If the visible bottom extends past the layout
+        /// frontier when AppKit draws, glyphs aren't generated and the
+        /// background paints instead.
         struct LayoutState {
             var storageLength: Int
             var firstUnlaid: Int
@@ -477,7 +440,7 @@ struct StoryTextView: NSViewRepresentable {
             var visibleCharEnd: Int
 
             /// True when the bottom of the visible region extends past the
-            /// layout frontier — the suspected condition for the flash.
+            /// layout frontier.
             var visibleBottomUnlaid: Bool {
                 firstUnlaid < visibleCharEnd
             }
@@ -503,10 +466,7 @@ struct StoryTextView: NSViewRepresentable {
             )
         }
 
-        /// Logs scroll geometry whenever it's "interesting" — gap < 0 (the
-        /// blank condition), or any change from the last logged state in
-        /// the gap or docH dimensions worth recording. Pre-/post-reconcile
-        /// and on scroll-to-bottom calls.
+        /// Logs scroll geometry for diagnostics.
         private func logScroll(_ context: String) {
             guard let state = captureScrollState() else { return }
             appLog("StoryTextView", state.description(context), level: .info)
@@ -554,23 +514,17 @@ struct StoryTextView: NSViewRepresentable {
                 }
             })
 
-            // Window key-state observers. AppKit sometimes scrolls the
-            // clip view back to (0,0) when the window becomes key on
-            // Cmd-Tab back; restore the position we observed before
-            // the resign (or fire scrollToBottom if the user was
-            // following the bottom). `attachScrollObservers` runs
-            // during makeNSView, before SwiftUI has placed the view
-            // in a window hierarchy, so `scrollView.window` is nil
-            // here. Observe `object: nil` and filter on the
-            // notification's source so we catch the window once it
-            // exists.
-            // We don't need a didResignKey observer — `lastKnownScrollY`
-            // is kept fresh by the scroll-end handler above and by
-            // reconcile's pre-mutation snapshot. By the time the
-            // window resigns key, the latest user scroll position is
-            // already captured. We deliberately don't reference `note`
-            // inside the MainActor block — NSNotification isn't
-            // Sendable and Swift 6 flags the capture.
+            // Window key-state observer. AppKit sometimes scrolls the clip
+            // view back to (0,0) when the window becomes key on Cmd-Tab back;
+            // restore the position observed before resign (or scrollToBottom if
+            // the user was following the bottom). `attachScrollObservers` runs
+            // during makeNSView, before the view is in a window hierarchy, so
+            // `scrollView.window` is nil here — observe `object: nil` and
+            // filter on the source to catch the window once it exists.
+            // No didResignKey observer is needed: `lastKnownScrollY` stays
+            // fresh via the scroll-end handler and reconcile's pre-mutation
+            // snapshot. Don't reference `note` inside the MainActor block —
+            // NSNotification isn't Sendable and Swift 6 flags the capture.
             scrollObservers.append(NotificationCenter.default.addObserver(
                 forName: NSWindow.didBecomeKeyNotification,
                 object: nil,
@@ -607,22 +561,16 @@ struct StoryTextView: NSViewRepresentable {
             mutationCompletedAt: CFAbsoluteTime?,
             mutationLayout: LayoutState?
         ) {
-            // `scrollRangeToVisible` is targeted — it only lays out enough
-            // text to bring the end of the document on-screen, instead of
-            // the entire textContainer. The previous `ensureLayout(for:)`
-            // version stalled the main thread for >1s once the feed grew
-            // past a few thousand lines.
+            // `scrollRangeToVisible` only lays out enough text to bring the
+            // end of the document on-screen, not the entire textContainer.
+            // An `ensureLayout(for:)` version stalled the main thread for >1s
+            // once the feed grew past a few thousand lines.
             guard let textView, let storage = textView.textStorage else { return }
 
-            // No diagnostic captures here on purpose. The previous
-            // `captureLayoutState()` + `captureScrollState()` pair read
-            // `doc.frame.height` and forced a full layout pass over
-            // every glyph in the storage — once the buffer hit its cap
-            // and front-trim fired on every reconcile, that meant a
-            // 500-700ms layout per line on the main thread. The
-            // blank-screen investigation that needed those snapshots
-            // is closed; arguments are kept on the signature so the
-            // observer-driven entry points still compile.
+            // No diagnostic captures here on purpose: reading `doc.frame.height`
+            // forces a full layout pass over the storage, which at cap means
+            // 500-700ms per line on the main thread. Arguments are kept on the
+            // signature so the observer-driven entry points still compile.
             _ = mutationCompletedAt
             _ = mutationLayout
 
@@ -653,15 +601,13 @@ struct StoryTextView: NSViewRepresentable {
     }
 }
 
-/// Read-only pane text view (story feed, stream panes, the highlight
-/// editor's test pane). One job: keep right-click > Copy working under
-/// sticky input focus. The standard NSTextView context-menu items are
-/// nil-targeted, which routes them through the window's first
-/// responder — and `CommandNSTextField`'s focus reclaim means that's
-/// the command input's empty field editor, so Copy validated itself
-/// disabled even with a visible selection in the pane. Retargeting
-/// the Copy item at this view makes both validation (enabled iff this
-/// pane has a selection) and the action use the right view.
+/// Read-only pane text view (story feed, stream panes, highlight-editor test
+/// pane). Keeps right-click > Copy working under sticky input focus: the
+/// standard NSTextView context-menu items are nil-targeted and route through
+/// the window's first responder, which (via `CommandNSTextField`'s focus
+/// reclaim) is the command input's empty field editor — so Copy validated
+/// itself disabled even with a visible selection. Retargeting Copy at this
+/// view makes both validation and the action use the right view.
 final class PaneTextView: NSTextView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let menu = super.menu(for: event) else { return nil }
@@ -717,9 +663,8 @@ private func appendLine(
             weight: bold ? .bold : .regular
         )
         if italic {
-            // SF Mono ships with an italic face; descriptors with the
-            // .italic trait pick it up. Falls back to a synthesised
-            // oblique if a particular weight+italic combo isn't shipped.
+            // SF Mono ships an italic face; the .italic trait picks it up, with
+            // a synthesised oblique fallback if a weight+italic combo isn't shipped.
             let italicDescriptor = base.fontDescriptor.withSymbolicTraits(.italic)
             attrs[.font] = NSFont(descriptor: italicDescriptor, size: fontSize) ?? base
         } else {
@@ -775,10 +720,10 @@ private func appendLine(
 ///
 /// 2. When a highlight's per-line range ends in whitespace at a wrap
 ///    point, shrink the width of that line's background fill so it
-///    doesn't extend past the last visible glyph. We deliberately
-///    only modify *width* — origin/height come straight from AppKit's
-///    `rectArray`, which is the known-good positioning. Prior attempts
-///    that re-derived the rect from `boundingRect` ended up misaligned.
+///    doesn't extend past the last visible glyph. Only `width` is
+///    modified — origin/height come straight from AppKit's `rectArray`
+///    (the known-good positioning); re-deriving the rect from
+///    `boundingRect` produced misalignment.
 final class TightBackgroundLayoutManager: NSLayoutManager {
     override func setExtraLineFragmentRect(
         _ fragmentRect: NSRect,
@@ -858,9 +803,8 @@ final class TightBackgroundLayoutManager: NSLayoutManager {
                 return
             }
 
-            // Measure the trailing whitespace's width via boundingRect.
-            // We only consume the *width*, never its origin — that's
-            // what makes this safe vs the earlier coord-derived rewrite.
+            // Measure the trailing whitespace's width via boundingRect,
+            // consuming only the width (never its origin).
             let trimRange = NSRange(
                 location: lineChars.location + lineChars.length - trimChars,
                 length: trimChars
