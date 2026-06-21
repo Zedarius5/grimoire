@@ -1,13 +1,13 @@
 # Grimoire
 
-A native **macOS** front-end for **GemStone IV** (and DragonRealms), built on top of
+A native **macOS** front-end for **GemStone IV**, built on top of
 [Lich](https://gswiki.play.net/Lich). Grimoire connects through your local Lich
 install and renders the game with a Mac-native UI — highlights, spell timers, a
 wound diagram, customizable panes, and a few tools you won't find in the other
 clients.
 
 > ⚠️ Independent, community-made client. **Not affiliated with or endorsed by
-> Simutronics.** GemStone IV and DragonRealms are trademarks of Simutronics Corp.
+> Simutronics.** GemStone IV is a trademark of Simutronics Corp.
 
 <!-- TODO: add a screenshot here -->
 
@@ -39,11 +39,11 @@ clients.
 ### Front-end essentials
 
 - Login picker with SGE auth and credentials stored in the macOS Keychain
-  (GS3 / GSX / GSF / GST and the DragonRealms variants).
+  (GS3 / GSX / GSF / GST).
 - Drag-and-drop resizable panes — lay the window out how you like.
 - Vitals, hands, a visual **body/wound diagram**, and an **exits compass**.
-- Server-driven **right-click context menus** on items and creatures, plus
-  clickable links and directions.
+- Server-driven **left-click context menus** on items and creatures (the same
+  as Wrayth), plus clickable links and directions.
 - Macros (with timed pauses), spell presets, and a spell-name database pulled
   from Lich.
 - Status-effect icons, log rotation, and a stuck-stream watchdog.
@@ -54,7 +54,7 @@ clients.
 - A working **[Lich](https://gswiki.play.net/Lich)** install (default location
   `~/Gemstone`), including Ruby and Lich's required gems. If `lich.rbw` runs for
   you from Terminal, you're set.
-- A **GemStone IV** or **DragonRealms** account.
+- A **GemStone IV** account.
 
 ## Install
 

@@ -626,7 +626,7 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         guard !line.runs.isEmpty, line.runs.allSatisfy({ $0.style.isPrompt }) else { return false }
         let joined = line.runs.map(\.text).joined().trimmingCharacters(in: .whitespaces)
         // Short, no spaces, ends with `>`. 8 chars covers every prompt
-        // variant I've seen in GS4/DR; bump if a longer one surfaces.
+        // variant I've seen in GS4; bump if a longer one surfaces.
         return joined.hasSuffix(">")
             && !joined.contains(" ")
             && joined.count <= 8

@@ -55,9 +55,6 @@ struct ConnectView: View {
                     Text("GemStone IV — Platinum (GSX)").tag("GSX")
                     Text("GemStone IV — Shattered (GSF)").tag("GSF")
                     Text("GemStone IV — Test (GST)").tag("GST")
-                    Text("DragonRealms (DR)").tag("DR")
-                    Text("DragonRealms — Platinum (DRX)").tag("DRX")
-                    Text("DragonRealms — Fallen (DRF)").tag("DRF")
                 }
                 .labelsHidden()
             }
