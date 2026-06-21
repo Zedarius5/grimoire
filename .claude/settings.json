@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(./scripts/run.sh*)",
-      "Bash(sample *)"
-    ]
-  }
-}
