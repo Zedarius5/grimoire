@@ -1,7 +1,8 @@
 import Foundation
 
-/// Reads Lich's cached effect/spell database (`~/Gemstone/data/effect-list.xml`)
-/// to translate Stormfront spell numbers like `709` into human-readable
+/// Reads Lich's cached effect/spell database (`data/effect-list.xml` under the
+/// resolved Lich folder) to translate Stormfront spell numbers like `709`
+/// into human-readable
 /// names like `Grasp of the Dead`. Any spell the user has seen in their
 /// Lich install is named in Grimoire even when the game isn't running.
 ///
@@ -15,18 +16,16 @@ public final class SpellNameDatabase: @unchecked Sendable {
     /// seen cooldown name shows up in the editor without a restart.
     public static let shared = SpellNameDatabase()
 
-    /// Default path Lich writes to. Override for tests or non-standard
-    /// installs.
-    public static let defaultPath: String = ("~/Gemstone/data/effect-list.xml" as NSString)
-        .expandingTildeInPath
-
     private let lock = NSLock()
     private var byId: [String: String] = [:]
     /// Names Grimoire has seen for ids that aren't in Lich's XML at all
     /// (7-10 digit cooldown / ability ids). Persisted via `Preferences`.
     /// Kept separate from `byId` so an XML reload doesn't drop them.
     private var observedById: [String: String] = [:]
-    private let path: String
+    /// Fixed effect-list path for test/explicit instances; nil for the shared
+    /// instance, which derives the path from the resolved Lich folder at
+    /// reload() time so it picks up the folder once the user sets/locates it.
+    private let fixedPath: String?
     /// `false` for test instances built with a custom path — we don't
     /// want unit tests polluting the user's persisted observed cache.
     private let persistsObserved: Bool
@@ -40,13 +39,24 @@ public final class SpellNameDatabase: @unchecked Sendable {
         qos: .utility
     )
 
-    public init(path: String = SpellNameDatabase.defaultPath) {
-        self.path = path
-        self.persistsObserved = (path == SpellNameDatabase.defaultPath)
+    /// `path` overrides the effect-list location (tests / non-standard
+    /// installs). The shared instance passes nil and resolves the path from
+    /// the Lich folder.
+    public init(path: String? = nil) {
+        self.fixedPath = path
+        self.persistsObserved = (path == nil)
         if persistsObserved {
             self.observedById = Preferences.loadObservedSpellNames()
         }
         reload()
+    }
+
+    /// Effect-list path in use right now: the explicit override, or
+    /// `data/effect-list.xml` under the resolved Lich folder (nil when no
+    /// valid Lich folder is known yet).
+    private var currentPath: String? {
+        if let fixedPath { return fixedPath }
+        return LichLocation.resolvedRoot().map { LichLocation.effectList(in: $0) }
     }
 
     /// Re-parses the on-disk effect-list. Cheap: ~230KB, parsed once
@@ -54,7 +64,8 @@ public final class SpellNameDatabase: @unchecked Sendable {
     /// when the file is absent (silently — Grimoire shouldn't fight a
     /// non-Lich install).
     public func reload() {
-        guard FileManager.default.fileExists(atPath: path),
+        guard let path = currentPath,
+              FileManager.default.fileExists(atPath: path),
               let parser = XMLParser(contentsOf: URL(fileURLWithPath: path)) else {
             return
         }

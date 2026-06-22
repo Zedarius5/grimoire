@@ -40,6 +40,14 @@ public enum Preferences {
         defaults.set(login.gameCode,  forKey: kLastGameCode)
     }
 
+    // MARK: - Lich install folder
+
+    private static let kLichDir = "grimoire.lichDir"
+
+    /// User-chosen Lich root, or nil if never set (auto-detect applies).
+    public static func loadLichDir() -> String? { defaults.string(forKey: kLichDir) }
+    public static func saveLichDir(_ path: String) { defaults.set(path, forKey: kLichDir) }
+
     // MARK: - Per-character window layout
 
     /// Stores `Codable` panes keyed by `<account>:<character>`.

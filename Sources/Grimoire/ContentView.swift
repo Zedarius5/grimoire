@@ -873,8 +873,7 @@ struct ContentView: View {
             account: result.account, character: result.character
         ) ?? [:]
 
-        let lichDir  = NSString(string: "~/Gemstone").expandingTildeInPath
-        let lichPath = "\(lichDir)/lich.rbw"
+        let lichPath = LichLocation.launcher(in: result.lichRoot)
         let creds = result.serverCreds
 
         lich.launch(
@@ -887,6 +886,9 @@ struct ContentView: View {
                 "--gtk"
             ]
         )
+        // The Lich folder is now known — (re)read the effect-list so spell
+        // timers show names instead of bare ids on a freshly-set-up install.
+        SpellNameDatabase.shared.reload()
 
         Task {
             for _ in 0..<120 {

@@ -25,7 +25,7 @@
 require 'json'
 
 # Lich install location. Override with LICH_DIR env var (Grimoire sets this).
-LICH_DIR = ENV['LICH_DIR'] || File.expand_path('~/Gemstone')
+LICH_DIR = ENV['LICH_DIR'] || File.expand_path('~/Lich5')
 LIB_DIR  = File.join(LICH_DIR, 'lib')
 DATA_DIR = File.join(LICH_DIR, 'data')
 

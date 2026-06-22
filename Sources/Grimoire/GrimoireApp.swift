@@ -43,6 +43,7 @@ struct GrimoireApp: App {
             // File ▸ Open Log… — review an old log with current highlights.
             CommandGroup(after: .newItem) {
                 OpenLogMenuItem()
+                SetLichFolderMenuItem()
             }
             // "Debug" menu in the menu bar with utilities that aren't part
             // of normal play.
@@ -83,6 +84,18 @@ struct GrimoireApp: App {
             }
         }
         .defaultSize(width: 900, height: 700)
+    }
+}
+
+/// Menu-bar item that lets the user point Grimoire at their Lich folder
+/// (e.g. after moving the install, or if auto-detect picked the wrong one).
+private struct SetLichFolderMenuItem: View {
+    var body: some View {
+        Button("Set Lich Folder…") {
+            if let root = LichFolderPicker.prompt() {
+                LichLocation.setRoot(root)
+            }
+        }
     }
 }
 

@@ -16,7 +16,7 @@ final class SpellPresetStore: ObservableObject {
         didSet { Preferences.saveSpellPresets(config) }
     }
 
-    /// Lich's cached spell-name database (`~/Gemstone/data/effect-list.xml`).
+    /// Lich's cached spell-name database (`data/effect-list.xml` under the Lich folder).
     /// Read once at init; the editor uses it as a fallback label when no
     /// live dialog text is available.
     let spellNames: SpellNameDatabase

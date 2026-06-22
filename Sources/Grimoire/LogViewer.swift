@@ -298,8 +298,10 @@ struct OpenLogMenuItem: View {
             if let logType = UTType(filenameExtension: "log") { types.insert(logType, at: 0) }
             panel.allowedContentTypes = types
             panel.allowsOtherFileTypes = true
-            let logs = URL(fileURLWithPath: NSString("~/Gemstone/logs").expandingTildeInPath)
-            if FileManager.default.fileExists(atPath: logs.path) { panel.directoryURL = logs }
+            if let root = LichLocation.resolvedRoot() {
+                let logs = URL(fileURLWithPath: LichLocation.logsDir(in: root))
+                if FileManager.default.fileExists(atPath: logs.path) { panel.directoryURL = logs }
+            }
             if panel.runModal() == .OK, let url = panel.url {
                 openWindow(value: url)
             }

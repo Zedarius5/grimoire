@@ -13,6 +13,7 @@ struct ConnectAuthResult {
     let rememberCredentials: Bool
     let serverCreds: GameCredentials
     let rubyPath: String
+    let lichRoot: String
 }
 
 /// Connect/Play popover. Owns the SGE authentication flow but delegates the
@@ -83,10 +84,23 @@ struct ConnectView: View {
 
         showingConnect = false
 
-        let ruby     = Self.resolveRubyPath()
-        let lichDir  = NSString(string: "~/Gemstone").expandingTildeInPath
+        let ruby = Self.resolveRubyPath()
 
         client.clearFailure()
+
+        // Find the Lich folder. Auto-detected installs (~/Lich5, ~/Gemstone)
+        // and a previously-set folder connect silently; otherwise prompt the
+        // user to locate it. Only a picked folder is persisted.
+        let lichRoot: String
+        if let resolved = LichLocation.resolvedRoot() {
+            lichRoot = resolved
+        } else if let picked = LichFolderPicker.prompt() {
+            LichLocation.setRoot(picked)
+            lichRoot = picked
+        } else {
+            client.reportFailure("Set your Lich folder to play (the folder that contains lich.rbw).")
+            return
+        }
 
         // sge_auth.rb ships in the app's resource bundle. Resolving it from the
         // bundle rather than a hardcoded checkout path lets the app run on any Mac.
@@ -100,7 +114,7 @@ struct ConnectView: View {
             creds = try await SgeAuth.authenticate(
                 rubyPath: ruby,
                 scriptPath: script,
-                lichDir: lichDir,
+                lichDir: lichRoot,
                 account: account,
                 password: password,
                 character: character,
@@ -118,7 +132,8 @@ struct ConnectView: View {
             gameCode: game,
             rememberCredentials: rememberCredentials,
             serverCreds: creds,
-            rubyPath: ruby
+            rubyPath: ruby,
+            lichRoot: lichRoot
         ))
     }
 
