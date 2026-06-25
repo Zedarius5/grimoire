@@ -355,12 +355,16 @@ struct DialogPane: View {
         dialog.widgets.filter { if case .separator = $0 { return false }; return true }
     }
 
-    /// Scroll-content height: the dialog's design height (px, 1:1) if given,
-    /// else the lowest widget plus a row's slack.
+    private static let manualRowHeight: CGFloat = 20
+
+    /// Scroll-content height = the lowest widget's bottom edge (+ slack), so the
+    /// ScrollView can reach every widget. The dialog's `height` is the window's
+    /// display size, not the content extent, so it is deliberately not used.
     private func manualContentHeight() -> CGFloat {
-        if let h = dialog.height { return max(h.resolve(against: 0), 40) }
-        let maxTop = manualWidgets.map { $0.layout.top?.resolve(against: 0) ?? 0 }.max() ?? 0
-        return max(maxTop + 24, 40)
+        let maxBottom = manualWidgets
+            .map { ($0.layout.top?.resolve(against: 0) ?? 0) + Self.manualRowHeight }
+            .max() ?? 0
+        return max(maxBottom + 6, 40)
     }
 
     /// Box width for a placed widget: its explicit `width`, else the gap to the
@@ -382,25 +386,26 @@ struct DialogPane: View {
         return max(8, layoutWidth - myX - 4)
     }
 
+    /// Mirrors `plainLayout`'s proven structure: ScrollView outside, a
+    /// GeometryReader inside (whose width is the viewport width, used for the
+    /// responsive X mapping), with an explicit content height. The widgets are
+    /// absolutely placed in a top-leading ZStack.
     private func manualContent() -> some View {
-        GeometryReader { outer in
-            let paneWidth = outer.size.width
-            let lw = ManualDialogLayout.layoutWidth(paneWidth: paneWidth)
-            let h = manualContentHeight()
-            let presetWindow = DialogWindow(rawValue: dialog.id)
-            let widgets = manualWidgets
-            ScrollView([.vertical, .horizontal]) {
+        ScrollView {
+            GeometryReader { geo in
+                let paneWidth = geo.size.width
+                let lw = ManualDialogLayout.layoutWidth(paneWidth: paneWidth)
+                let presetWindow = DialogWindow(rawValue: dialog.id)
+                let widgets = manualWidgets
                 ZStack(alignment: .topLeading) {
-                    // Anchors the content size so the scroll extent is right
-                    // even when no widget reaches the far corner.
-                    Color.clear.frame(width: lw, height: h)
                     ForEach(widgets.indices, id: \.self) { idx in
                         placedWidget(widgets[idx], paneWidth: paneWidth,
                                      layoutWidth: lw, presetWindow: presetWindow)
                     }
                 }
-                .frame(width: lw, height: h, alignment: .topLeading)
+                .frame(width: lw, height: manualContentHeight(), alignment: .topLeading)
             }
+            .frame(height: manualContentHeight())
         }
     }
 
