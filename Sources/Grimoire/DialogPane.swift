@@ -407,6 +407,10 @@ struct DialogPane: View {
             }
             .frame(height: manualContentHeight())
         }
+        // A small inset so text isn't flush against the pane edge (matches the
+        // breathing room the stream panes get from their text-container inset).
+        .padding(.horizontal, 10)
+        .padding(.top, 4)
     }
 
     private func placedWidget(
