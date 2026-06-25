@@ -371,6 +371,12 @@ public final class StreamRenderer {
             }
         case "prompt" where !selfClosing:
             promptDepth += 1
+            // The prompt's `time` is the server's current clock. Anchor to it
+            // so roundtime (also server-clock timestamps) is measured against
+            // the same reference and any server/local clock skew cancels.
+            if let t = attrs["time"], let serverNow = TimeInterval(t) {
+                gameState.serverClockOffset = serverNow - Date().timeIntervalSince1970
+            }
         case "compDef", "component",
              "menuLink", "output":
             // openDialog/closeDialog are deliberately NOT here — their specific

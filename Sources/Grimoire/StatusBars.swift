@@ -214,11 +214,12 @@ struct RoundtimeBricks: View {
     }
 
     private func remainingSeconds(until end: TimeInterval?) -> Int {
-        guard let end else { return 0 }
-        // Read wall-clock directly, not `now` (the @State). A fresh RT
-        // arriving after a long idle gap would render against stale time
-        // and explode the brick count.
-        return max(0, Int(ceil(end - Date().timeIntervalSince1970)))
+        // Compute against the server's clock (see GameState.secondsRemaining):
+        // roundtime timestamps are server-clock, so comparing to the local
+        // clock breaks when the two are skewed. Reads wall-clock fresh each
+        // call (not the @State `now`), so a post-idle RT can't explode the
+        // brick count.
+        state.secondsRemaining(until: end)
     }
 }
 

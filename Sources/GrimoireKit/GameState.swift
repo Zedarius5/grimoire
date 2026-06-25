@@ -78,6 +78,13 @@ public struct GameState: Equatable, Sendable {
     /// Unix epoch seconds when current cast/spell roundtime ends.
     public var castTimeEnd: TimeInterval? = nil
 
+    /// (server clock − local clock), measured at the last `<prompt time=…>`.
+    /// Roundtime timestamps are in the server's time reference, so we add this
+    /// to the local clock before comparing — otherwise any skew between the
+    /// game server's clock and this machine makes every RT look expired.
+    /// Defaults to 0 (no correction until the first prompt arrives).
+    public var serverClockOffset: TimeInterval = 0
+
     public var wounds = Wounds()
 
     /// Current `<indicator>` flags, keyed by id (e.g. `"IconSTANDING"`,
@@ -97,6 +104,15 @@ public struct GameState: Equatable, Sendable {
     /// Room id from `<nav rm='N'/>` — Lich emits this when entering a new
     /// room. Used as the small "#12345" badge beside the room name.
     public var roomNumber: String = ""
+
+    /// Whole seconds remaining until `end` (a server-clock timestamp),
+    /// computed against the server's clock (local clock + `serverClockOffset`).
+    /// 0 when `end` is nil or already past. Drives the roundtime bricks.
+    public func secondsRemaining(until end: TimeInterval?,
+                                 localNow: TimeInterval = Date().timeIntervalSince1970) -> Int {
+        guard let end else { return 0 }
+        return max(0, Int((end - (localNow + serverClockOffset)).rounded(.up)))
+    }
 
     public init() {}
 }
