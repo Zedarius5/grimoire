@@ -11,12 +11,27 @@ public struct Dialog: Identifiable, Equatable, Sendable {
     /// elapsed seconds from each progressBar's `time` value so the visible
     /// countdown ticks smoothly between Lich's emit intervals.
     public var lastUpdated: Date
+    /// `scroll='manual'` on the opening `<openDialog>`: children are positioned
+    /// by absolute left/top px rather than auto-flowed into rows.
+    public var scrollManual: Bool
+    /// `<openDialog height=…>` — the manual dialog's design height (px), used as
+    /// the scroll-content extent.
+    public var height: Length?
 
-    public init(id: String, title: String = "", widgets: [DialogWidget] = [], lastUpdated: Date = Date()) {
+    public init(
+        id: String,
+        title: String = "",
+        widgets: [DialogWidget] = [],
+        lastUpdated: Date = Date(),
+        scrollManual: Bool = false,
+        height: Length? = nil
+    ) {
         self.id = id
         self.title = title.isEmpty ? id : title
         self.widgets = widgets
         self.lastUpdated = lastUpdated
+        self.scrollManual = scrollManual
+        self.height = height
     }
 }
 

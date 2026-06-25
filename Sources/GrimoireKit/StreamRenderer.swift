@@ -422,7 +422,12 @@ public final class StreamRenderer {
         case "openDialog":
             let id = attrs["id"] ?? ""
             let title = attrs["title"] ?? id
-            dialogs[id] = Dialog(id: id, title: title)
+            dialogs[id] = Dialog(
+                id: id,
+                title: title,
+                scrollManual: attrs["scroll"] == "manual",
+                height: Length.parse(attrs["height"])
+            )
             if !selfClosing { invisibleStack.append("openDialog") }
         case "closeDialog":
             if let id = attrs["id"] {

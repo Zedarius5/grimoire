@@ -154,15 +154,23 @@ struct DialogPane: View {
 
             // Widget content fades on disconnect; title bar above stays
             // visible so the user can still see which pane is which.
-            ScrollView {
-                GeometryReader { geo in
-                    if let wounds, !sideBySideRows.isEmpty {
-                        woundsLayout(wounds: wounds, geo: geo)
-                    } else {
-                        plainLayout(geo: geo)
+            Group {
+                if dialog.scrollManual {
+                    // scroll='manual' dialogs position children by absolute
+                    // left/top px (see manualContent).
+                    manualContent()
+                } else {
+                    ScrollView {
+                        GeometryReader { geo in
+                            if let wounds, !sideBySideRows.isEmpty {
+                                woundsLayout(wounds: wounds, geo: geo)
+                            } else {
+                                plainLayout(geo: geo)
+                            }
+                        }
+                        .frame(minHeight: contentHeight)
                     }
                 }
-                .frame(minHeight: contentHeight)
             }
             .opacity(isActive ? 1 : 0)
             .animation(.easeInOut(duration: 1.25), value: isActive)
@@ -338,6 +346,80 @@ struct DialogPane: View {
         }
         let per = usable / CGFloat(count)
         return Array(repeating: per, count: count)
+    }
+
+    // MARK: - Manual (absolute) layout — scroll='manual' dialogs
+
+    /// Widgets eligible for absolute placement (drops separators).
+    private var manualWidgets: [DialogWidget] {
+        dialog.widgets.filter { if case .separator = $0 { return false }; return true }
+    }
+
+    /// Scroll-content height: the dialog's design height (px, 1:1) if given,
+    /// else the lowest widget plus a row's slack.
+    private func manualContentHeight() -> CGFloat {
+        if let h = dialog.height { return max(h.resolve(against: 0), 40) }
+        let maxTop = manualWidgets.map { $0.layout.top?.resolve(against: 0) ?? 0 }.max() ?? 0
+        return max(maxTop + 24, 40)
+    }
+
+    /// Box width for a placed widget: its explicit `width`, else the gap to the
+    /// next column on the same row, else the remaining width to the edge.
+    private func manualWidth(_ w: DialogWidget, paneWidth: CGFloat, layoutWidth: CGFloat) -> CGFloat {
+        if let explicit = w.layout.width { return max(8, explicit.resolve(against: layoutWidth)) }
+        let leftPx = w.layout.left?.resolve(against: ManualDialogLayout.designWidth) ?? 0
+        let topPx  = w.layout.top?.resolve(against: 0) ?? 0
+        let myX = ManualDialogLayout.position(leftPx: leftPx, topPx: topPx, paneWidth: paneWidth).x
+        let nextLeftPx = manualWidgets.compactMap { other -> CGFloat? in
+            let oTop  = other.layout.top?.resolve(against: 0) ?? 0
+            let oLeft = other.layout.left?.resolve(against: ManualDialogLayout.designWidth) ?? 0
+            return (oTop == topPx && oLeft > leftPx) ? oLeft : nil
+        }.min()
+        if let nextLeftPx {
+            let nextX = ManualDialogLayout.position(leftPx: nextLeftPx, topPx: topPx, paneWidth: paneWidth).x
+            return max(8, nextX - myX - 6)
+        }
+        return max(8, layoutWidth - myX - 4)
+    }
+
+    private func manualContent() -> some View {
+        GeometryReader { outer in
+            let paneWidth = outer.size.width
+            let lw = ManualDialogLayout.layoutWidth(paneWidth: paneWidth)
+            let h = manualContentHeight()
+            let presetWindow = DialogWindow(rawValue: dialog.id)
+            let widgets = manualWidgets
+            ScrollView([.vertical, .horizontal]) {
+                ZStack(alignment: .topLeading) {
+                    // Anchors the content size so the scroll extent is right
+                    // even when no widget reaches the far corner.
+                    Color.clear.frame(width: lw, height: h)
+                    ForEach(widgets.indices, id: \.self) { idx in
+                        placedWidget(widgets[idx], paneWidth: paneWidth,
+                                     layoutWidth: lw, presetWindow: presetWindow)
+                    }
+                }
+                .frame(width: lw, height: h, alignment: .topLeading)
+            }
+        }
+    }
+
+    private func placedWidget(
+        _ w: DialogWidget, paneWidth: CGFloat, layoutWidth: CGFloat, presetWindow: DialogWindow?
+    ) -> some View {
+        let leftPx = w.layout.left?.resolve(against: ManualDialogLayout.designWidth) ?? 0
+        let topPx  = w.layout.top?.resolve(against: 0) ?? 0
+        let pos = ManualDialogLayout.position(leftPx: leftPx, topPx: topPx, paneWidth: paneWidth)
+        return DialogWidgetView(
+            widget: w,
+            width: manualWidth(w, paneWidth: paneWidth, layoutWidth: layoutWidth),
+            timerConfig: timerConfig,
+            dialogLastUpdated: dialog.lastUpdated,
+            onCommand: onCommand,
+            presetWindow: presetWindow
+        )
+        .equatable()
+        .offset(x: pos.x, y: pos.y)
     }
 }
 
