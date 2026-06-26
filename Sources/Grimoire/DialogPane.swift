@@ -494,27 +494,34 @@ private struct DialogWidgetView: View, Equatable {
     /// short-circuits.
     @EnvironmentObject private var highlights: HighlightStore
 
-    /// Runs the user's highlight rules over `text` and returns an
-    /// AttributedString carrying any matched fg/bg overrides. The caller
-    /// still applies the widget's default styling — this only overlays
-    /// user-defined rules.
-    private func highlighted(_ text: String) -> AttributedString {
-        let line = RenderedLine(runs: [
-            RenderedRun(text: text, style: RunStyle())
-        ])
-        let processed = HighlightProcessor.apply(highlights.effectiveHighlights, to: line)
-        var out = AttributedString()
-        for run in processed.runs {
-            var seg = AttributedString(run.text)
-            if let hex = run.style.highlightFg, let c = Color(hex: hex) {
-                seg.foregroundColor = c
+    /// Renders `text` with the user's highlight rules applied. A matched run's
+    /// background is drawn with a real `.background(...)` that fills the line
+    /// height — matching the story window — rather than SwiftUI's tight inline
+    /// `AttributedString.backgroundColor`. Foreground overrides and the widget's
+    /// base color/underline are preserved. With no highlights the text is a
+    /// single run (a single `Text`), so truncation behaves exactly as before.
+    @ViewBuilder
+    private func styledContent(_ text: String, baseColor: Color, underline: Bool) -> some View {
+        let line = RenderedLine(runs: [RenderedRun(text: text, style: RunStyle())])
+        let runs = HighlightProcessor.apply(highlights.effectiveHighlights, to: line).runs
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
+                let fg = run.style.highlightFg.flatMap { Color(hex: $0) } ?? baseColor
+                let seg = Text(run.text).foregroundStyle(fg).underline(underline)
+                if let bgHex = run.style.highlightBg, let bg = Color(hex: bgHex) {
+                    // Padded "badge" so the highlight isn't cramped against the
+                    // glyphs. Horizontal carries most of the breathing room;
+                    // vertical stays small so the badge doesn't bleed into the
+                    // neighbouring row (manual dialogs have a ~18px row pitch).
+                    seg
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(bg, in: RoundedRectangle(cornerRadius: 3))
+                } else {
+                    seg
+                }
             }
-            if let hex = run.style.highlightBg, let c = Color(hex: hex) {
-                seg.backgroundColor = c
-            }
-            out += seg
         }
-        return out
     }
 
     var body: some View {
@@ -529,9 +536,8 @@ private struct DialogWidgetView: View, Equatable {
                     .modifier(WidthModifier(width: width, height: 18))
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             } else {
-                Text(highlighted(text))
+                styledContent(text, baseColor: GameTheme.foreground, underline: false)
                     .font(.system(size: fontSize - 1, design: .monospaced))
-                    .foregroundStyle(GameTheme.foreground)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .modifier(WidthModifier(width: width, alignment: .leading))
@@ -541,10 +547,8 @@ private struct DialogWidgetView: View, Equatable {
             Button {
                 if let cmd, !cmd.isEmpty { onCommand(cmd) }
             } label: {
-                Text(highlighted(text))
+                styledContent(text, baseColor: GameTheme.entityLink, underline: true)
                     .font(.system(size: fontSize - 1, design: .monospaced))
-                    .foregroundStyle(GameTheme.entityLink)
-                    .underline()
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .modifier(WidthModifier(width: width, alignment: .leading))
