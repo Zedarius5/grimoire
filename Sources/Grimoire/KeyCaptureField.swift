@@ -18,6 +18,9 @@ struct KeyCaptureField: View {
 
     @State private var capturing: Bool = false
     @State private var monitor: Any? = nil
+    /// Used to suppress the runtime macro engine while this field is capturing,
+    /// so a keystroke meant to bind a macro doesn't fire the existing one.
+    @EnvironmentObject private var macros: MacroEngine
 
     var body: some View {
         Button {
@@ -85,6 +88,9 @@ struct KeyCaptureField: View {
 
     private func startCapture() {
         guard monitor == nil else { return }
+        // Suppress the runtime macro engine while capturing so the keystroke
+        // binds the macro instead of firing the existing one into the game.
+        macros.beginKeyCapture()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Esc with no modifiers cancels capture without writing.
             // (Modifier-Esc, e.g. Shift-Esc, is still a valid bind.)
@@ -113,6 +119,7 @@ struct KeyCaptureField: View {
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
+            macros.endKeyCapture()
         }
     }
 }

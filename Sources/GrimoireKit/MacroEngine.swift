@@ -64,13 +64,26 @@ public final class MacroEngine: ObservableObject {
         config.activeSetId = setId
     }
 
+    // MARK: - Key-capture suppression
+
+    /// While > 0, the runtime key monitor ignores macro keys. The macro
+    /// editor's key-capture field raises this while it's listening, so pressing
+    /// a key to bind it doesn't also fire the existing macro — which would leak
+    /// a command to the game and swallow the keystroke before the field sees
+    /// it. Counted so overlapping capture fields stay balanced.
+    private var captureSuppression = 0
+    public var isKeyCaptureSuppressed: Bool { captureSuppression > 0 }
+    public func beginKeyCapture() { captureSuppression += 1 }
+    public func endKeyCapture() { captureSuppression = max(0, captureSuppression - 1) }
+
     public func startMonitoring() {
         guard eventMonitor == nil else { return }
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            if let action = self.match(event) {
+            if let combo = Self.canonicalKey(for: event),
+               let action = self.actionToFire(forCombo: combo) {
                 self.execute(action)
-                return nil  // consume the event so the TextField doesn't also see it
+                return nil  // consume so the field/responder doesn't also see it
             }
             return event
         }
@@ -85,8 +98,10 @@ public final class MacroEngine: ObservableObject {
 
     // MARK: - Matching
 
-    private func match(_ event: NSEvent) -> String? {
-        guard let combo = canonicalCombo(for: event) else { return nil }
+    /// The action bound to `combo` in the active set, falling back to the
+    /// default set (0) for shared shortcuts. Pure lookup — no suppression gate.
+    /// Internal so tests can exercise the matcher directly.
+    func matchedAction(forCombo combo: String) -> String? {
         // Check active set first.
         if let activeSet = config.sets.first(where: { $0.id == activeSetId }),
            let binding = activeSet.bindings.first(where: { keysEqual($0.key, combo) }) {
@@ -99,6 +114,15 @@ public final class MacroEngine: ObservableObject {
             return binding.action
         }
         return nil
+    }
+
+    /// The action to fire for a captured key combo, or nil when nothing should
+    /// fire — either no binding matches, or the macro editor is currently
+    /// capturing a key (so the keystroke reaches the capture field instead of
+    /// leaking a macro to the game).
+    func actionToFire(forCombo combo: String) -> String? {
+        guard !isKeyCaptureSuppressed else { return nil }
+        return matchedAction(forCombo: combo)
     }
 
     /// Normalizes Wrayth-style key strings ("Alt-Ctrl-E", "Shift-Page Up") so
@@ -132,10 +156,6 @@ public final class MacroEngine: ObservableObject {
         let sortedMods = mods.sorted()
         let key = keyParts.joined(separator: "-")
         return (sortedMods + [key]).joined(separator: "-")
-    }
-
-    private func canonicalCombo(for event: NSEvent) -> String? {
-        Self.canonicalKey(for: event)
     }
 
     /// Builds the canonical binding string for an `NSEvent`. Public so the
