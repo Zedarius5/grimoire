@@ -861,6 +861,12 @@ struct ContentView: View {
             character: result.character,
             gameCode: result.gameCode
         ))
+        // Remember this (successful) character for the Play dialog's recent list.
+        Preferences.addRecentLogin(.init(
+            account: result.account,
+            character: result.character,
+            gameCode: result.gameCode
+        ))
         if result.rememberCredentials {
             Keychain.save(password: result.password, account: result.account)
         } else {

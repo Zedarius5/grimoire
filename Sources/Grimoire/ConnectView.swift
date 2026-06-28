@@ -30,9 +30,16 @@ struct ConnectView: View {
     @Binding var rememberCredentials: Bool
     let onAuthenticated: (ConnectAuthResult) -> Void
 
+    @State private var recents: [Preferences.LastLogin] = []
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Play").font(.headline)
+
+            if !recents.isEmpty {
+                recentList
+                Divider()
+            }
 
             HStack {
                 Text("Account").frame(width: 80, alignment: .trailing)
@@ -72,6 +79,62 @@ struct ConnectView: View {
         }
         .padding(16)
         .frame(width: 420)
+        .onAppear { recents = Preferences.loadRecentLogins() }
+    }
+
+    /// Scrollable list of previously logged-in characters. Tap a row to fill
+    /// the form; the ✕ forgets that character.
+    private var recentList: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Recent characters")
+                .font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(recents) { entry in
+                        HStack(spacing: 6) {
+                            Button { selectRecent(entry) } label: {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(entry.character)
+                                    Text("\(entry.account) · \(entry.gameCode)")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            Button {
+                                Preferences.removeRecentLogin(entry)
+                                recents = Preferences.loadRecentLogins()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Forget this character")
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(Color(nsColor: .textBackgroundColor).opacity(0.6))
+                        )
+                    }
+                }
+            }
+            // A definite height (not just maxHeight) so the ScrollView doesn't
+            // collapse to zero inside the dialog's height-hugging VStack.
+            .frame(height: min(CGFloat(recents.count) * 40, 160))
+        }
+    }
+
+    /// Fills the form from a saved character (and its Keychain password).
+    private func selectRecent(_ entry: Preferences.LastLogin) {
+        launchAccount = entry.account
+        launchCharacter = entry.character
+        launchGameCode = entry.gameCode
+        if let pw = Keychain.loadPassword(account: entry.account) {
+            launchPassword = pw
+        }
     }
 
     private func authenticate() async {

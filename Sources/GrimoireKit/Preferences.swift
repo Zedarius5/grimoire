@@ -14,15 +14,26 @@ public enum Preferences {
     private static let kLastCharacter = "grimoire.lastCharacter"
     private static let kLastGameCode  = "grimoire.lastGameCode"
 
-    public struct LastLogin {
+    public struct LastLogin: Codable, Equatable, Hashable, Identifiable {
         public var account: String
         public var character: String
         public var gameCode: String
+
+        /// Stable id for SwiftUI lists (account+character+game, case-folded).
+        /// Computed, so it isn't part of the Codable form.
+        public var id: String { "\(account.lowercased()):\(character.lowercased()):\(gameCode)" }
 
         public init(account: String, character: String, gameCode: String) {
             self.account = account
             self.character = character
             self.gameCode = gameCode
+        }
+
+        /// De-dupe match: same account+character (case-insensitive) and game.
+        public func matches(_ other: LastLogin) -> Bool {
+            account.lowercased() == other.account.lowercased()
+                && character.lowercased() == other.character.lowercased()
+                && gameCode == other.gameCode
         }
     }
 
@@ -38,6 +49,38 @@ public enum Preferences {
         defaults.set(login.account,   forKey: kLastAccount)
         defaults.set(login.character, forKey: kLastCharacter)
         defaults.set(login.gameCode,  forKey: kLastGameCode)
+    }
+
+    // MARK: - Recent logins (successful)
+
+    private static let kRecentLogins = "grimoire.recentLogins.v1"
+    private static let recentLoginsCap = 20
+
+    /// Successfully-logged-in characters, most-recent first.
+    public static func loadRecentLogins() -> [LastLogin] {
+        guard let data = defaults.data(forKey: kRecentLogins),
+              let list = try? JSONDecoder().decode([LastLogin].self, from: data)
+        else { return [] }
+        return list
+    }
+
+    /// Records a successful login at the front — de-duped (case-insensitive on
+    /// account+character, exact game) and capped at `recentLoginsCap`.
+    public static func addRecentLogin(_ login: LastLogin) {
+        var list = loadRecentLogins().filter { !$0.matches(login) }
+        list.insert(login, at: 0)
+        if list.count > recentLoginsCap { list = Array(list.prefix(recentLoginsCap)) }
+        persistRecentLogins(list)
+    }
+
+    public static func removeRecentLogin(_ login: LastLogin) {
+        persistRecentLogins(loadRecentLogins().filter { !$0.matches(login) })
+    }
+
+    private static func persistRecentLogins(_ list: [LastLogin]) {
+        if let data = try? JSONEncoder().encode(list) {
+            defaults.set(data, forKey: kRecentLogins)
+        }
     }
 
     // MARK: - Lich install folder
