@@ -238,6 +238,12 @@ struct ContentView: View {
         .onChange(of: macros.config) { _, newValue in
             Preferences.saveMacros(newValue)
         }
+        .onChange(of: macros.activeSetId) { _, newSet in
+            // Remember the active set for the logged-in character.
+            if let profile = activeProfile {
+                Preferences.saveActiveMacroSet(newSet, account: profile.account, character: profile.character)
+            }
+        }
         // Auto-discover new dialog windows and stream windows the moment the
         // server / a Lich script first emits them. The new pane goes in as
         // `.hidden` so it shows up in the Windows popover without barging
@@ -862,6 +868,13 @@ struct ContentView: View {
         }
 
         activeProfile = (account: result.account, character: result.character)
+        // Restore this character's last-used macro set (the sets are shared;
+        // only the active choice is per-character). Only if that set still
+        // exists — a since-deleted id leaves the current default in place.
+        if let savedSet = Preferences.loadActiveMacroSet(account: result.account, character: result.character),
+           macros.config.sets.contains(where: { $0.id == savedSet }) {
+            macros.setActive(setId: savedSet)
+        }
         if let saved: [PaneSpec] = Preferences.loadPanes(
             as: [PaneSpec].self, account: result.account, character: result.character
         ) {

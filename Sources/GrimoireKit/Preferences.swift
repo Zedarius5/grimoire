@@ -87,6 +87,27 @@ public enum Preferences {
         "grimoire.sizes.\(account.lowercased()).\(character.lowercased())"
     }
 
+    // MARK: - Per-character active macro set
+
+    /// Which macro set a character last had active. The sets themselves are
+    /// shared (see `saveMacros`); only the active *choice* is per-character.
+    private static func activeMacroSetKey(account: String, character: String) -> String {
+        "grimoire.activeMacroSet.\(account.lowercased()).\(character.lowercased())"
+    }
+
+    /// The character's last-active set id, or nil if never saved. Uses
+    /// `object(forKey:)` so "unset" is distinguishable from a saved 0 (set 0 is
+    /// a valid default set).
+    public static func loadActiveMacroSet(account: String, character: String) -> Int? {
+        let key = activeMacroSetKey(account: account, character: character)
+        guard defaults.object(forKey: key) != nil else { return nil }
+        return defaults.integer(forKey: key)
+    }
+
+    public static func saveActiveMacroSet(_ setId: Int, account: String, character: String) {
+        defaults.set(setId, forKey: activeMacroSetKey(account: account, character: character))
+    }
+
     // MARK: - Macros
 
     private static let kMacros = "grimoire.macros.v1"
