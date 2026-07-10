@@ -38,9 +38,11 @@ clients.
 
 ### Front-end essentials
 
-- Login picker with SGE auth and credentials stored in the macOS Keychain
-  (GS3 / GSX / GSF / GST).
-- Drag-and-drop resizable panes — lay the window out how you like.
+- Login picker with SGE auth, credentials stored in the macOS Keychain
+  (GS3 / GSX / GSF / GST), and a recent-characters list for one-click login.
+- Drag-and-drop resizable panes — lay the window out how you like, save named
+  layouts, and each character remembers the layout (and macro set) they last
+  used.
 - Vitals, hands, a visual **body/wound diagram**, and an **exits compass**.
 - Server-driven **left-click context menus** on items and creatures (the same
   as Wrayth), plus clickable links and directions.
@@ -51,9 +53,10 @@ clients.
 ## Requirements
 
 - **macOS 15 (Sequoia) or later**
-- A working **[Lich](https://gswiki.play.net/Lich)** install (default location
-  `~/Gemstone`), including Ruby and Lich's required gems. If `lich.rbw` runs for
-  you from Terminal, you're set.
+- A working **[Lich](https://gswiki.play.net/Lich)** install, including Ruby and
+  Lich's required gems. If `lich.rbw` runs for you from Terminal, you're set.
+  Grimoire auto-detects the standard locations (`~/Lich5`, `~/Gemstone`) and
+  asks you to locate the folder otherwise — any path works.
 - A **GemStone IV** account.
 
 ## Install
@@ -92,12 +95,13 @@ CONFIG=release INSTALL=0 LAUNCH=0 ./scripts/build-app.sh
 
 ## First run
 
-1. Make sure Lich is installed at `~/Gemstone` (this is currently assumed; a
-   configurable folder is on the roadmap).
-2. Open Grimoire and use the **Play** dialog: enter your account, password, and
+1. Open Grimoire and use the **Play** dialog: enter your account, password, and
    character, and pick your game (GemStone IV by default).
-3. Check **"Remember on this Mac"** to save the password to your Keychain for
-   next time.
+2. If Lich isn't in a standard location (`~/Lich5` or `~/Gemstone`), Grimoire
+   asks you to point it at your Lich folder — once, then it's remembered.
+3. Check **"Remember on this Mac"** to save the password to your Keychain.
+   Characters you've played appear in a **recent characters** list for
+   one-click login next time.
 
 Grimoire authenticates with Simutronics, then launches Lich and connects to it
 for you.
