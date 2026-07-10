@@ -9,7 +9,7 @@ clients.
 > ⚠️ Independent, community-made client. **Not affiliated with or endorsed by
 > Simutronics.** GemStone IV is a trademark of Simutronics Corp.
 
-<!-- TODO: add a screenshot here -->
+![Grimoire mid-hunt: story feed with highlights, spell timers, wound diagram, and script panes](Resources/Readme-screenshot.png)
 
 ## Features
 
