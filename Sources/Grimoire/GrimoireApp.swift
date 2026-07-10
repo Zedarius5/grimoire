@@ -49,6 +49,8 @@ struct GrimoireApp: App {
             // of normal play.
             CommandMenu("Debug") {
                 OpenPerfDebugMenuItem()
+                Divider()
+                RawStreamCaptureToggle(client: client)
             }
         }
 
@@ -96,6 +98,22 @@ private struct SetLichFolderMenuItem: View {
                 LichLocation.setRoot(root)
             }
         }
+    }
+}
+
+/// Debug ▸ Capture Raw Stream. Persisted + off by default; when on, every raw
+/// line the game sends is written to `<lich>/grimoire_capture/grimoire-raw-*.log`
+/// so stream oddities can be traced to their exact wire input. Armed state
+/// starts the capture at the next connect (so login/boot lines are included).
+private struct RawStreamCaptureToggle: View {
+    let client: LichClient
+    @AppStorage(RawStreamCapture.defaultsKey) private var enabled = false
+
+    var body: some View {
+        Toggle("Capture Raw Stream", isOn: Binding(
+            get: { enabled },
+            set: { client.setRawCapture($0) }
+        ))
     }
 }
 

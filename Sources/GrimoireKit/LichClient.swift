@@ -125,7 +125,17 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
 
     // MARK: - Connect / disconnect
 
+    /// Opt-in raw-stream diagnostic (Debug ▸ Capture Raw Stream). Armed via a
+    /// persisted flag so it captures from the first line of a session.
+    private let rawCapture = RawStreamCapture()
+
+    /// Toggle the raw-stream capture (persists the flag; starts/stops now).
+    public func setRawCapture(_ on: Bool) { rawCapture.setEnabled(on) }
+
     public func connect(host: String, port: UInt16, mode: Mode = .raw) {
+        // Arm the raw capture before any data flows so the login/boot readout
+        // is included.
+        rawCapture.startIfArmed()
         // UI-thread state.
         status = .connecting
         endpointLabel = "\(host):\(port)"
@@ -183,6 +193,7 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
         default:
             break
         }
+        rawCapture.stop()
         scheduleRenderedStateClear()
 
         workQueue.async { [weak self] in
@@ -406,6 +417,7 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
             byteBuffer.removeSubrange(byteBuffer.startIndex...nlIndex)
 
             guard let raw = String(data: lineData, encoding: .utf8) else { continue }
+            if RawStreamCapture.isEnabled { rawCapture.write(raw) }
             let trimmed = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
             guard !trimmed.isEmpty else { continue }
 
