@@ -1,0 +1,300 @@
+{
+ "windows": [
+  {
+   "defaultStyling": {
+    "hidden": false
+   },
+   "groups": [
+    {
+     "enabled": true,
+     "id": "34446B3E-69BD-4B18-B2D3-6B5D2AAB79B9",
+     "name": "Minor Elemental (400's)",
+     "styling": {
+      "barColor": "#003678",
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "id": "706646A6-A284-4756-9680-15BA30E52139",
+     "name": "Minor Spiritual (100's)",
+     "styling": {
+      "barColor": "#989E7A",
+      "hidden": false
+     }
+    }
+   ],
+   "presets": [
+    {
+     "enabled": true,
+     "groupId": "34446B3E-69BD-4B18-B2D3-6B5D2AAB79B9",
+     "id": "5E089AD7-DF55-4ECA-9808-98ACCBCCEAAD",
+     "spellId": "430",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "34446B3E-69BD-4B18-B2D3-6B5D2AAB79B9",
+     "id": "45B62DDE-4DE9-4C2A-8983-FDB69EE31ED2",
+     "spellId": "401",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "34446B3E-69BD-4B18-B2D3-6B5D2AAB79B9",
+     "id": "BC732B97-2792-4AA3-92D9-EA6468AF031B",
+     "spellId": "406",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "34446B3E-69BD-4B18-B2D3-6B5D2AAB79B9",
+     "id": "1A835164-4C6E-4A6A-A5A4-FC81B99996C7",
+     "spellId": "414",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "34446B3E-69BD-4B18-B2D3-6B5D2AAB79B9",
+     "id": "86F63A95-D7F8-4188-841B-4C4E7D0400FB",
+     "spellId": "425",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "706646A6-A284-4756-9680-15BA30E52139",
+     "id": "BE80860A-CA0A-4B90-9AFA-5E8520636B34",
+     "spellId": "104",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "706646A6-A284-4756-9680-15BA30E52139",
+     "id": "E3E711EF-9C2E-4DE1-87CA-2197332386EC",
+     "spellId": "120",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "706646A6-A284-4756-9680-15BA30E52139",
+     "id": "694DBAD1-91EF-4935-85FA-F2096835FFF8",
+     "spellId": "105",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "706646A6-A284-4756-9680-15BA30E52139",
+     "id": "6DA26801-4A86-4459-A6F1-034C9A9C1DDA",
+     "spellId": "102",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "706646A6-A284-4756-9680-15BA30E52139",
+     "id": "8FAECB77-00DF-4D8A-BD1A-30A66A53CE41",
+     "spellId": "101",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "706646A6-A284-4756-9680-15BA30E52139",
+     "id": "2F6B4577-8249-4E90-A2F5-2E7CFB0F3F97",
+     "spellId": "103",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "706646A6-A284-4756-9680-15BA30E52139",
+     "id": "35B619C0-A4A5-42D7-92BF-F831B0511230",
+     "spellId": "107",
+     "styling": {
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "706646A6-A284-4756-9680-15BA30E52139",
+     "id": "5CB0C1FE-84EC-4FF1-8CE1-22155560EA06",
+     "spellId": "112",
+     "styling": {
+      "hidden": false
+     }
+    }
+   ],
+   "window": "Active Spells"
+  },
+  {
+   "defaultStyling": {
+    "hidden": false
+   },
+   "groups": [
+    {
+     "enabled": true,
+     "id": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "name": "GoS Sigils",
+     "styling": {
+      "barColor": "#D8E512",
+      "hidden": false,
+      "textColor": "#212121",
+      "troughColor": "#9D881B"
+     }
+    }
+   ],
+   "presets": [
+    {
+     "enabled": true,
+     "groupId": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "id": "2B20F358-55D1-4DCF-933D-717B0F6AB052",
+     "spellId": "5309",
+     "styling": {
+      "fullBarSeconds": 120,
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "id": "44DF538D-70FA-4B2C-B553-CFACBBF61CE7",
+     "spellId": "5312",
+     "styling": {
+      "fullBarSeconds": 300,
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "id": "220BF56B-F963-4143-A264-5935DE2976BB",
+     "spellId": "5315",
+     "styling": {
+      "fullBarSeconds": 120,
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "id": "CCE7BE1A-52FF-47BD-9AD7-48F5F7EEDCEB",
+     "spellId": "5316",
+     "styling": {
+      "fullBarSeconds": 60,
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "id": "BB1CB938-6B03-4BB2-94C7-35D2D067633F",
+     "spellId": "5318",
+     "styling": {
+      "fullBarSeconds": 600,
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "id": "54E73754-C5B7-4917-A4C1-ADEC69D57312",
+     "spellId": "5319",
+     "styling": {
+      "fullBarSeconds": 600,
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "id": "29E2CF4B-3F40-4EDE-8949-1E4EB7898556",
+     "spellId": "5321",
+     "styling": {
+      "fullBarSeconds": 180,
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "047AD593-2EAF-4696-A895-EAA156854D3B",
+     "id": "13098D22-4481-4531-AB2E-5DC16ED8EDD4",
+     "spellId": "5324",
+     "styling": {
+      "fullBarSeconds": 60,
+      "hidden": false
+     }
+    }
+   ],
+   "window": "Buffs"
+  },
+  {
+   "defaultStyling": {
+    "hidden": false
+   },
+   "groups": [],
+   "presets": [],
+   "window": "Cooldowns"
+  },
+  {
+   "defaultStyling": {
+    "hidden": false
+   },
+   "groups": [
+    {
+     "enabled": true,
+     "id": "6ADD7D01-473D-4CDD-9B0E-8FB6261D2052",
+     "name": "High-vis",
+     "styling": {
+      "barColor": "#FF0000",
+      "barHeight": 30,
+      "fontSize": 16,
+      "hidden": false,
+      "troughColor": "#800000"
+     }
+    }
+   ],
+   "presets": [
+    {
+     "enabled": true,
+     "groupId": "6ADD7D01-473D-4CDD-9B0E-8FB6261D2052",
+     "id": "4F6A2722-F48B-492A-8B6B-0E56FC28193F",
+     "spellId": "200001",
+     "styling": {
+      "fullBarSeconds": 20,
+      "hidden": false
+     }
+    },
+    {
+     "enabled": true,
+     "groupId": "6ADD7D01-473D-4CDD-9B0E-8FB6261D2052",
+     "id": "F62FE2AC-6979-4DBA-97C8-85E4B0DF47EF",
+     "spellId": "208192",
+     "styling": {
+      "fullBarSeconds": 60,
+      "hidden": false
+     }
+    }
+   ],
+   "window": "Debuffs"
+  }
+ ]
+}

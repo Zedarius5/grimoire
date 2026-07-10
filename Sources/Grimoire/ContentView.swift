@@ -104,15 +104,18 @@ struct ContentView: View {
         return TimerBarConfig(normalize: timerBarsNormalize, windowSeconds: window)
     }
 
-    /// Appends any `PaneSpec.defaults` entries whose id is missing from the
-    /// saved layout — keeps a user's existing arrangement intact but makes
+    /// Appends any `PaneSpec.defaults` entries whose *source* is missing from
+    /// the saved layout — keeps a user's existing arrangement intact but makes
     /// newly-added default panes (e.g. Debuffs) show up in the Windows
-    /// popover so the user can reveal them. New panes default to `.hidden`
+    /// popover so the user can reveal them. Matching on source rather than id
+    /// matters for panes a user discovered before they were promoted into the
+    /// defaults (an existing `auto.dialog.expr` is the same window as the
+    /// default `expr` — don't add a duplicate). New panes default to `.hidden`
     /// so they don't pop into the layout unexpectedly.
     private func mergeWithDefaults(saved: [PaneSpec]) -> [PaneSpec] {
         var merged = saved
-        let savedIds = Set(saved.map(\.id))
-        for spec in PaneSpec.defaults where !savedIds.contains(spec.id) {
+        let savedSources = Set(saved.map(\.source))
+        for spec in PaneSpec.defaults where !savedSources.contains(spec.source) {
             var addition = spec
             addition.region = .hidden
             merged.append(addition)
@@ -816,7 +819,11 @@ struct ContentView: View {
                     dialog: dlg,
                     onCommand: { client.send($0) },
                     timerConfig: timerConfig(for: dialogId),
-                    wounds: dialogId == "UberBar" ? client.gameState.wounds : nil,
+                    // Both the game's own injuries dialog and the uberbar
+                    // script's UberBar emit per-body-part <image> widgets;
+                    // either renders the wound diagram.
+                    wounds: (dialogId == "UberBar" || dialogId == "injuries")
+                        ? client.gameState.wounds : nil,
                     isActive: client.isActive
                 )
                 // Intentionally not `.equatable()` — that optimization breaks

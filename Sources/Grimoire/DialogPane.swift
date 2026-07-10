@@ -162,7 +162,11 @@ struct DialogPane: View {
                 } else {
                     ScrollView {
                         GeometryReader { geo in
-                            if let wounds, !sideBySideRows.isEmpty {
+                            // Not gated on having label rows: the game's
+                            // injuries dialog is image-widgets only (all
+                            // filtered from `rows`), so the diagram must
+                            // render even when nothing else does.
+                            if let wounds {
                                 woundsLayout(wounds: wounds, geo: geo)
                             } else {
                                 plainLayout(geo: geo)

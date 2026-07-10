@@ -86,32 +86,105 @@ struct PaneSpec: Identifiable, Codable, Equatable, Hashable {
 }
 
 extension PaneSpec {
-    /// Default Wrayth-style layout. Stream panes are pre-routed; dialog panes
-    /// light up only when the Lich script that emits them runs (and after
-    /// the user has it docked in a non-hidden region).
+    /// Stock layout for a brand-new install, baked from a curated live
+    /// arrangement: Familiar/Thoughts across the top, a character-status
+    /// column on the left, effect timers stacked on the right, Speech along
+    /// the bottom. Everything else starts hidden — configured and listed in
+    /// the Windows popover, but off-screen until wanted.
     static let defaults: [PaneSpec] = [
-        // Stream-based panes (chat-style)
-        .init(id: "thoughts", title: "Thoughts", source: .stream("thoughts"), region: .top),
+        // Top row
         .init(id: "familiar", title: "Familiar", source: .stream("familiar"), region: .top),
-        .init(id: "death",    title: "Death",    source: .stream("death"),    region: .right),
-        .init(id: "logons",   title: "Logons",   source: .stream("logons"),   region: .right),
-        .init(id: "speech",   title: "Speech",   source: .stream("speech"),   region: .bottom),
-        .init(id: "room",     title: "Room",     source: .stream("room"),     region: .hidden),
-        .init(id: "bounty",   title: "Bounty",   source: .stream("bounty"),   region: .hidden),
-        .init(id: "inv",      title: "Inventory", source: .stream("inv"),     region: .hidden),
-        .init(id: "loot",     title: "Loot",     source: .stream("loot"),     region: .hidden),
-        .init(id: "society",  title: "Society",  source: .stream("society"),  region: .hidden),
+        .init(id: "thoughts", title: "Thoughts", source: .stream("thoughts"), region: .top),
 
-        // Dialog-based panes (Lich-script-pushed widgets)
-        .init(id: "uberbar",  title: "Status",   source: .dialog("UberBar"),         region: .left),
+        // Left column — character status, top to bottom. Wounds render as a
+        // body diagram from the game's own injuries dialog, so a new user
+        // gets the paperdoll with no scripts required.
+        .init(id: "injuries", title: "Injuries",   source: .dialog("injuries"), region: .left),
+        .init(id: "expr",     title: "Experience", source: .dialog("expr"),     region: .left),
+        .init(id: "bounty",   title: "Bounty",     source: .stream("bounty"),   region: .left),
+        .init(id: "reserve",  title: "Reserved Items", source: .stream("reserve"), region: .left),
+        .init(id: "logons",   title: "Logons",     source: .stream("logons"),   region: .left),
+        .init(id: "death",    title: "Death",      source: .stream("death"),    region: .left),
+
+        // Right column — effect timers
         .init(id: "buffs",    title: "Buffs",    source: .dialog("Buffs"),           region: .right),
         .init(id: "actspell", title: "Active Spells", source: .dialog("Active Spells"), region: .right),
         .init(id: "debuffs",  title: "Debuffs",  source: .dialog("Debuffs"),         region: .right),
         .init(id: "cooldwn",  title: "Cooldowns", source: .dialog("Cooldowns"),      region: .right),
-        .init(id: "treas",    title: "Treasure",  source: .dialog("TreasureWindow"), region: .right),
-        .init(id: "creat",    title: "Creatures", source: .dialog("CreatureWindow"), region: .bottom),
-        .init(id: "plyrs",    title: "Players",   source: .dialog("PlayerWindow"),   region: .bottom),
+
+        // Bottom row
+        .init(id: "speech",   title: "Speech",   source: .stream("speech"),   region: .bottom),
+
+        // Hidden until the user docks them
+        .init(id: "room",     title: "Room",      source: .stream("room"),    region: .hidden),
+        .init(id: "inv",      title: "Inventory", source: .stream("inv"),     region: .hidden),
+        .init(id: "loot",     title: "Loot",      source: .stream("loot"),    region: .hidden),
+        .init(id: "society",  title: "Society",   source: .stream("society"), region: .hidden),
+        .init(id: "treas",    title: "Treasure",  source: .dialog("TreasureWindow"), region: .hidden),
+        .init(id: "creat",    title: "Creatures", source: .dialog("CreatureWindow"), region: .hidden),
+        .init(id: "plyrs",    title: "Players",   source: .dialog("PlayerWindow"),   region: .hidden),
         .init(id: "flares",   title: "Flares",    source: .dialog("FlareWindow"),    region: .hidden),
         .init(id: "hazards",  title: "Hazards",   source: .dialog("HazardWindow"),   region: .hidden),
+        // Script-driven status bar — hidden by default since a new user
+        // won't have the uberbar script running.
+        .init(id: "uberbar",  title: "Status",    source: .dialog("UberBar"),        region: .hidden),
+        // Hidden, but its lines land in the story feed rather than
+        // vanishing into an off-screen pane.
+        .init(id: "ambients", title: "Ambients",  source: .stream("ambients"), region: .hidden,
+              fallthroughToMainWhenHidden: true),
     ]
+
+    /// Split sizes that pair with `defaults` (points, captured on a large
+    /// window; `ResizableStack` rescales everything proportionally to the
+    /// actual window, so only the ratios matter).
+    static let defaultSizes: [String: CGFloat] = [
+        "column.left": 273, "column.center": 1066, "column.right": 338,
+        "region.top": 229, "region.feed": 766, "region.bottom": 221,
+        "injuries": 200, "expr": 182, "bounty": 185,
+        "reserve": 206, "logons": 132, "death": 154,
+    ]
+}
+
+extension PaneSource {
+    /// Window ids the game itself provides over the Wrayth protocol —
+    /// they exist for every player, scripts or not. Anything outside these
+    /// sets arrived from a Lich script (UberBar, ESP, map windows, …).
+    /// Categorization only: it drives the Standard / Lich-scripts split in
+    /// the Windows popover, nothing behavioral.
+    private static let gameDialogIds: Set<String> = [
+        "minivitals", "expr", "injuries", "stance", "encum", "combat",
+        "quick", "quick-simu", "quick-combat",
+        "Buffs", "Active Spells", "Debuffs", "Cooldowns",
+    ]
+    private static let gameStreamIds: Set<String> = [
+        "main", "thoughts", "familiar", "speech", "whispers", "talk",
+        "death", "logons", "bounty", "society", "inv", "room", "loot",
+        "reserve",
+    ]
+
+    var isGameNative: Bool {
+        switch self {
+        case .dialog(let id): return Self.gameDialogIds.contains(id)
+        case .stream(let id): return Self.gameStreamIds.contains(id)
+        }
+    }
+
+    /// Which Lich script pushes this window, for ids we've been able to
+    /// attribute (verified against the script sources that emit them).
+    /// Display-only — shown next to the window name in the Windows popover
+    /// so the user knows which script a pane belongs to. Unattributed
+    /// script windows just show their window name.
+    private static let scriptNamesByDialogId: [String: String] = [
+        "UberBar": "uberbar", "UberBounty": "uberbounty",
+        "TreasureWindow": "treasurewindow", "CreatureWindow": "creaturewindow",
+        "PlayerWindow": "playerwindow", "FlareWindow": "flarewindow",
+        "HazardWindow": "hazardwindow",
+    ]
+
+    /// Script attribution for this source, or nil when it's a game window
+    /// or an unattributed script window.
+    var scriptName: String? {
+        guard case .dialog(let id) = self else { return nil }
+        return Self.scriptNamesByDialogId[id]
+    }
 }

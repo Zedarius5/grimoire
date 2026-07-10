@@ -21,6 +21,11 @@ let package = Package(
                 // Bundled so the app resolves it at runtime via Bundle.module
                 // instead of a hardcoded checkout path — works on any Mac.
                 .copy("Resources/sge_auth.rb"),
+                // Starter highlight rules and spell presets, loaded on first
+                // run (no saved config) so a new user sees how groups,
+                // notify rules, and preset styling are meant to be used.
+                .copy("Resources/default-highlights.json"),
+                .copy("Resources/default-spell-presets.json"),
             ]
         ),
         .target(

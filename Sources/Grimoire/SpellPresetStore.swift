@@ -23,15 +23,27 @@ final class SpellPresetStore: ObservableObject {
 
     init(spellNames: SpellNameDatabase = .shared) {
         self.spellNames = spellNames
-        if let saved = Preferences.loadSpellPresets() {
+        // Saved config wins; a first run falls back to the bundled starter
+        // presets (Minor Elemental/Spiritual timer groups, GoS sigils,
+        // high-vis debuffs) so the preset editor isn't an empty mystery.
+        if let loaded = Preferences.loadSpellPresets() ?? Self.bundledStarterConfig() {
             // Ensure every DialogWindow has a config — covers older
             // saved data that pre-dates new windows being added.
-            var merged = saved
+            var merged = loaded
             for window in DialogWindow.allCases where !merged.windows.contains(where: { $0.window == window }) {
                 merged.update(WindowConfig(window: window))
             }
             self.config = merged
         }
+    }
+
+    /// Decodes `Resources/default-spell-presets.json`. Nil (never fatal) if
+    /// the resource is missing or fails to decode.
+    private static func bundledStarterConfig() -> SpellPresetConfig? {
+        guard let url = Bundle.module.url(
+            forResource: "default-spell-presets", withExtension: "json"
+        ), let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(SpellPresetConfig.self, from: data)
     }
 
     /// Total preset count across every window — used by Options

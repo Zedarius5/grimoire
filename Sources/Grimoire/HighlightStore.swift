@@ -20,7 +20,22 @@ final class HighlightStore: ObservableObject {
     init() {
         if let saved = Preferences.loadHighlights() {
             self.config = saved
+        } else if let starter = Self.bundledStarterConfig() {
+            // First run: seed the starter library (crit-fatal groups,
+            // damage tints, mob-death, a notify example) so a new user
+            // sees working highlights instead of an empty editor.
+            self.config = starter
         }
+    }
+
+    /// Decodes `Resources/default-highlights.json`. Nil (never fatal) if the
+    /// resource is missing or fails to decode — an empty config is a usable
+    /// fallback, just a blank slate.
+    private static func bundledStarterConfig() -> HighlightConfig? {
+        guard let url = Bundle.module.url(
+            forResource: "default-highlights", withExtension: "json"
+        ), let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(HighlightConfig.self, from: data)
     }
 
     deinit {

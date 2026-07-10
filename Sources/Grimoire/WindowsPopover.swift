@@ -22,31 +22,37 @@ struct WindowsPopover: View {
                 .foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
+                    // Sectioned by what the window IS (game-provided vs.
+                    // pushed by a Lich script), not by how the pane entered
+                    // the list — auto-discovered game windows (Experience,
+                    // Stance, …) belong under Standard, and script widgets
+                    // (UberBar, ESP, maps) under Lich scripts even when
+                    // they're part of the stock layout.
                     sectionHeader("Standard")
                     gridHeaderRow
                     ForEach($panes) { $pane in
-                        if !pane.id.hasPrefix("auto.") {
+                        if pane.source.isGameNative {
                             paneRow(pane: $pane)
                         }
                     }
 
-                    let discoveredCount = panes.filter { $0.id.hasPrefix("auto.") }.count
-                    if discoveredCount > 0 {
+                    let scriptCount = panes.filter { !$0.source.isGameNative }.count
+                    if scriptCount > 0 {
                         Divider().padding(.vertical, 4)
                         DisclosureGroup(isExpanded: $showingDiscoveredPanes) {
                             gridHeaderRow
                             ForEach($panes) { $pane in
-                                if pane.id.hasPrefix("auto.") {
+                                if !pane.source.isGameNative {
                                     paneRow(pane: $pane)
                                 }
                             }
                         } label: {
                             HStack(spacing: 6) {
-                                Text("Discovered by scripts")
+                                Text("From Lich scripts")
                                     .font(.system(size: 11, weight: .semibold))
                                     .tracking(0.4)
                                     .foregroundStyle(.secondary)
-                                Text("(\(discoveredCount))")
+                                Text("(\(scriptCount))")
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                             }
@@ -59,7 +65,7 @@ struct WindowsPopover: View {
             HStack {
                 Button("Reset to defaults") {
                     panes = PaneSpec.defaults
-                    paneSizes = [:]
+                    paneSizes = PaneSpec.defaultSizes
                 }
                 Spacer()
                 Button("Done", action: onDone)
@@ -104,10 +110,19 @@ struct WindowsPopover: View {
     @ViewBuilder
     private func paneRow(pane: Binding<PaneSpec>) -> some View {
         HStack(spacing: 4) {
-            Text(pane.wrappedValue.title)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Attributed script windows read "script: Window" so the user
+            // can tell which script a pane belongs to at a glance.
+            Group {
+                if let script = pane.wrappedValue.source.scriptName {
+                    Text("\(script): ").foregroundStyle(.secondary)
+                        + Text(pane.wrappedValue.title)
+                } else {
+                    Text(pane.wrappedValue.title)
+                }
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(Self.regionGridOrder) { region in
                 regionToggle(pane: pane, region: region)
             }
