@@ -103,8 +103,10 @@ struct ResizableStack<ItemID: Hashable>: View {
         return resolved
     }
 
-    /// Drags the divider between items[idx] and items[idx+1] by `delta`,
-    /// promoting both to explicit sizes so the change persists.
+    /// Drags the divider between items[idx] and items[idx+1] by `delta`.
+    /// Pins every item in the stack to its current resolved size — not just
+    /// the two touching the divider — so the whole arrangement's sizes persist
+    /// exactly, then applies the drag to the two neighbours.
     private func adjust(at idx: Int, delta: CGFloat, resolved: [CGFloat]) {
         let before = resolved[idx]
         let after  = resolved[idx + 1]
@@ -113,6 +115,9 @@ struct ResizableStack<ItemID: Hashable>: View {
         // If a clamp kicked in, only apply the symmetric portion.
         let appliedDelta = min(newBefore - before, after - newAfter)
         var newSizes = sizes
+        for (i, item) in items.enumerated() {
+            newSizes[key(item)] = resolved[i]
+        }
         newSizes[key(items[idx])]     = before + appliedDelta
         newSizes[key(items[idx + 1])] = after  - appliedDelta
         sizes = newSizes

@@ -11,6 +11,7 @@ struct GrimoireApp: App {
     @StateObject private var macros = MacroEngine()
     @StateObject private var highlights = HighlightStore()
     @StateObject private var spellPresets = SpellPresetStore()
+    @StateObject private var layouts = LayoutStore()
     // Hoisted from ContentView so the AppDelegate can SIGTERM the spawned Lich
     // child on Cmd-Q / red-button close; otherwise it orphans and keeps the
     // character in the world past logout.
@@ -26,6 +27,7 @@ struct GrimoireApp: App {
                 .environmentObject(macros)
                 .environmentObject(highlights)
                 .environmentObject(spellPresets)
+                .environmentObject(layouts)
                 .onAppear {
                     // Hand the delegate weak refs; retain stays on the
                     // @StateObjects up here.

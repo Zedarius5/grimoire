@@ -15,6 +15,7 @@ struct OptionsPopover: View {
     @EnvironmentObject var macros: MacroEngine
     @EnvironmentObject var highlights: HighlightStore
     @EnvironmentObject var spellPresets: SpellPresetStore
+    @EnvironmentObject var layouts: LayoutStore
     @Environment(\.openWindow) private var openWindow
 
     @AppStorage("grimoire.macroThreshold") private var macroThreshold: Int = 3
@@ -29,6 +30,12 @@ struct OptionsPopover: View {
 
     @State private var importingMacros: Bool = false
     @State private var macroError: String? = nil
+
+    // Layout name prompt (shared by New… and Rename…).
+    @State private var showingLayoutNamePrompt: Bool = false
+    @State private var renamingLayout: Bool = false
+    @State private var layoutNameField: String = ""
+    @State private var showingLayoutDeleteConfirm: Bool = false
 
     private enum TimerStepperUnit { case seconds, minutes }
 
@@ -46,6 +53,10 @@ struct OptionsPopover: View {
                 }
                 Slider(value: $fontSize, in: 9...28, step: 1)
             }
+
+            Divider()
+
+            layoutSection
 
             Divider()
 
@@ -166,6 +177,72 @@ struct OptionsPopover: View {
         ) { result in
             handleMacroImport(result)
         }
+        .alert(renamingLayout ? "Rename layout" : "New layout",
+               isPresented: $showingLayoutNamePrompt) {
+            TextField("Layout name", text: $layoutNameField)
+            Button("Cancel", role: .cancel) {}
+            Button(renamingLayout ? "Rename" : "Create") {
+                if renamingLayout {
+                    layouts.renameActive(to: layoutNameField)
+                } else {
+                    layouts.addLayout(named: layoutNameField,
+                                      panes: layouts.activePanes,
+                                      sizes: layouts.activeSizes)
+                }
+            }
+        } message: {
+            Text(renamingLayout
+                 ? "Give this layout a new name."
+                 : "Save the current window arrangement under a new name.")
+        }
+        .alert("Delete layout?", isPresented: $showingLayoutDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { layouts.deleteActive() }
+        } message: {
+            Text("Delete the layout “\(layouts.activeName)”? This can’t be undone.")
+        }
+    }
+
+    /// Switch / create / rename / delete named window layouts. Layouts are
+    /// global (shared across characters); edits to the arrangement auto-save
+    /// into the active one.
+    private var layoutSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Layout").font(.subheadline.bold())
+            HStack {
+                Text("Active layout")
+                Spacer()
+                Picker("", selection: activeLayoutBinding) {
+                    ForEach(layouts.names, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 200)
+            }
+            HStack {
+                Button("New…") {
+                    renamingLayout = false
+                    layoutNameField = ""
+                    showingLayoutNamePrompt = true
+                }
+                Button("Rename…") {
+                    renamingLayout = true
+                    layoutNameField = layouts.activeName
+                    showingLayoutNamePrompt = true
+                }
+                Button("Delete") { showingLayoutDeleteConfirm = true }
+                    .disabled(!layouts.canDelete)
+                Spacer()
+            }
+            Text("Layouts are shared across characters — handy for switching between monitors. Changes auto-save to the active layout.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var activeLayoutBinding: Binding<String> {
+        Binding(get: { layouts.activeName }, set: { layouts.select($0) })
     }
 
     /// Renders one row of the Options "Timer bars" section — a label, a

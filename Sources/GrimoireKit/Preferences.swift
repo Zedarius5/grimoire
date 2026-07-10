@@ -130,6 +130,40 @@ public enum Preferences {
         "grimoire.sizes.\(account.lowercased()).\(character.lowercased())"
     }
 
+    // MARK: - Named layout set
+
+    private static let kLayouts = "grimoire.layouts.v1"
+
+    /// Stores the whole named-layout set (items + active selection) as one blob.
+    /// Generic because the `Layout`/`PaneSpec` payload lives in the app target.
+    public static func saveLayouts<T: Encodable>(_ layouts: T) {
+        guard let data = try? JSONEncoder().encode(layouts) else { return }
+        defaults.set(data, forKey: kLayouts)
+    }
+
+    public static func loadLayouts<T: Decodable>(as type: T.Type) -> T? {
+        guard let data = defaults.data(forKey: kLayouts) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    // MARK: - Per-character active layout
+
+    /// Which layout a character last had active. The layouts themselves are
+    /// shared (see `saveLayouts`); only the active *choice* is per-character,
+    /// so each character logs back in with the layout they last used.
+    private static func activeLayoutKey(account: String, character: String) -> String {
+        "grimoire.activeLayout.\(account.lowercased()).\(character.lowercased())"
+    }
+
+    /// The character's last-active layout name, or nil if never saved.
+    public static func loadActiveLayout(account: String, character: String) -> String? {
+        defaults.string(forKey: activeLayoutKey(account: account, character: character))
+    }
+
+    public static func saveActiveLayout(_ name: String, account: String, character: String) {
+        defaults.set(name, forKey: activeLayoutKey(account: account, character: character))
+    }
+
     // MARK: - Per-character active macro set
 
     /// Which macro set a character last had active. The sets themselves are

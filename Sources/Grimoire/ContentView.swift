@@ -21,6 +21,7 @@ struct ContentView: View {
     @EnvironmentObject private var lich: LichProcess
     @EnvironmentObject private var macros: MacroEngine
     @EnvironmentObject private var highlights: HighlightStore
+    @EnvironmentObject private var layouts: LayoutStore
     @Environment(\.openWindow) private var openWindow
 
     @State private var fontSize: Double = 13
@@ -123,6 +124,14 @@ struct ContentView: View {
         return merged
     }
 
+    /// Mirror the active named layout into the live arrangement. Called on
+    /// launch and whenever the user switches layouts. Merging with defaults
+    /// keeps any newly-added default panes available (as hidden).
+    private func applyActiveLayout() {
+        panes = mergeWithDefaults(saved: layouts.activePanes)
+        paneSizes = layouts.activeSizes
+    }
+
     private var activeMacroSetName: String? {
         guard !macros.config.sets.isEmpty else { return nil }
         return macros.config.sets.first(where: { $0.id == macros.config.activeSetId })?.name
@@ -177,6 +186,7 @@ struct ContentView: View {
             GrimoireLinkRouter(client: client).handle(url)
         })
         .onAppear {
+            applyActiveLayout()
             restoreLastLoginIntoForm()
             setupMacros()
             if !didAutoOpenConnect, !client.isActive {
@@ -228,14 +238,21 @@ struct ContentView: View {
             client.setStreamFallthroughIds(streamFallthroughIds(in: panes))
         }
         .onChange(of: panes) { _, newValue in
-            if let profile = activeProfile {
-                Preferences.savePanes(newValue, account: profile.account, character: profile.character)
-            }
+            // Window layouts are global (per-monitor), not per-character: fold
+            // live edits into the active named layout.
+            layouts.updateActive(panes: newValue)
             client.setStreamFallthroughIds(streamFallthroughIds(in: newValue))
         }
         .onChange(of: paneSizes) { _, newValue in
+            layouts.updateActive(sizes: newValue)
+        }
+        // The active layout changed (user switched in Options, or login
+        // restored a character's layout) — load it, and remember it as this
+        // character's choice (per-character, like the active macro set).
+        .onChange(of: layouts.activeName) { _, newName in
+            applyActiveLayout()
             if let profile = activeProfile {
-                Preferences.saveSizes(newValue, account: profile.account, character: profile.character)
+                Preferences.saveActiveLayout(newName, account: profile.account, character: profile.character)
             }
         }
         .onChange(of: macros.config) { _, newValue in
@@ -888,16 +905,15 @@ struct ContentView: View {
            macros.config.sets.contains(where: { $0.id == savedSet }) {
             macros.setActive(setId: savedSet)
         }
-        if let saved: [PaneSpec] = Preferences.loadPanes(
-            as: [PaneSpec].self, account: result.account, character: result.character
-        ) {
-            panes = mergeWithDefaults(saved: saved)
-        } else {
-            panes = PaneSpec.defaults
+        // Restore this character's last-active window layout. Layouts are
+        // shared; only the active choice is per-character — so each character
+        // logs back in with the layout they last used (selecting it reloads
+        // the panes via the activeName onChange). A since-deleted layout
+        // leaves the current one in place.
+        if let savedLayout = Preferences.loadActiveLayout(account: result.account, character: result.character),
+           layouts.names.contains(savedLayout) {
+            layouts.select(savedLayout)
         }
-        paneSizes = Preferences.loadSizes(
-            account: result.account, character: result.character
-        ) ?? [:]
 
         let lichPath = LichLocation.launcher(in: result.lichRoot)
         let creds = result.serverCreds
@@ -993,17 +1009,8 @@ struct ContentView: View {
            let stored = Keychain.loadPassword(account: last.account) {
             launchPassword = stored
         }
-        if !last.account.isEmpty, !last.character.isEmpty {
-            if let saved: [PaneSpec] = Preferences.loadPanes(
-                as: [PaneSpec].self,
-                account: last.account,
-                character: last.character
-            ) {
-                panes = mergeWithDefaults(saved: saved)
-                activeProfile = (account: last.account, character: last.character)
-            }
-            paneSizes = Preferences.loadSizes(account: last.account, character: last.character) ?? [:]
-        }
+        // Panes/sizes come from the active named layout (loaded on launch),
+        // not per-character storage.
     }
 }
 
