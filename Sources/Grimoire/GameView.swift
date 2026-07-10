@@ -89,7 +89,8 @@ struct StreamPane: View, Equatable {
                 lines: lines,
                 revision: revision,
                 highlights: highlights,
-                onLinkClick: onLinkClick
+                onLinkClick: onLinkClick,
+                label: title
             )
             .environment(\.fontSize, fontSize - 1)
             .opacity(isActive ? 1 : 0)

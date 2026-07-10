@@ -21,14 +21,16 @@ struct StoryTextView: NSViewRepresentable {
     let revision: Int
     let highlights: [Highlight]
     let onLinkClick: (URL) -> Void
+    /// Pane name for diagnostics only (e.g. "main", "Thoughts").
+    var label: String = "main"
 
     @Environment(\.fontSize) private var fontSize
 
     func makeNSView(context: Context) -> NSScrollView {
         // Should happen once per pane mount; firing during gameplay means a
         // parent view dropped+remounted us, which resets scroll to y=0.
-        appLog("StoryTextView", "makeNSView: creating fresh NSTextView", level: .info)
-        let scrollView = NSScrollView()
+        appLog("StoryTextView", "makeNSView[\(label)]: creating fresh NSTextView", level: .info)
+        let scrollView = PaneScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -93,13 +95,21 @@ struct StoryTextView: NSViewRepresentable {
 
         context.coordinator.scrollView = scrollView
         context.coordinator.textView = textView
+        context.coordinator.label = label
         context.coordinator.onLinkClick = onLinkClick
         context.coordinator.attachScrollObservers(to: scrollView)
+        // Legacy mouse wheels never post the will/didEndLiveScroll
+        // notifications, so without this hook a wheel scroll would leave the
+        // follow-bottom intent stale in both directions (see Coordinator).
+        scrollView.onUserScrollEvent = { [weak coordinator = context.coordinator] in
+            coordinator?.noteUserScrolled()
+        }
 
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.label = label
         context.coordinator.onLinkClick = onLinkClick
         context.coordinator.reconcile(
             lines: lines,
@@ -115,6 +125,7 @@ struct StoryTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         weak var scrollView: NSScrollView?
         weak var textView: NSTextView?
+        var label: String = "main"
         var onLinkClick: ((URL) -> Void)?
 
         private var appliedLineCount: Int = 0
@@ -126,16 +137,31 @@ struct StoryTextView: NSViewRepresentable {
         /// don't call `scrollRangeToVisible` per batch — that AppKit path
         /// forces glyph layout each time and is costly under busy traffic.
         private var scrollToBottomScheduled: Bool = false
-        /// Last known good scroll-y while the window was key. Restored on
+        /// Last scroll-y the *user* chose (scroll gesture end, wheel event,
+        /// scroller interaction) — adjusted by the front-trim compensation so
+        /// it tracks the same content while the cap advances. Restored on
         /// `NSWindow.didBecomeKeyNotification` because AppKit sometimes resets
         /// the clipView's bounds.origin to (0,0) during the key-state
         /// transition, scrolling the user to the top on Cmd-Tab back.
+        /// Deliberately NOT refreshed from arbitrary reads of the current clip
+        /// position: an involuntary AppKit displacement must never overwrite
+        /// the user's position with the broken one.
         private var lastKnownScrollY: CGFloat? = nil
-        /// Whether the user was parked at the bottom at the last observe. If
-        /// true, becomeKey re-fires scrollToBottom (bringing any content that
-        /// arrived while backgrounded into view) instead of restoring the
-        /// absolute y-offset.
-        private var wasAtBottomAtLastObserve: Bool = true
+        /// Previous clip-origin y / clip size, for classifying bounds changes
+        /// (user scroll vs resize vs involuntary jump) in the observer below.
+        private var lastObservedClipY: CGFloat = 0
+        private var lastObservedClipSize: NSSize = .zero
+        /// Whether the pane should stick to the bottom as new content
+        /// arrives. This is USER INTENT, not measured geometry: it flips only
+        /// on user-initiated scrolls (trackpad/wheel/scroller). Involuntary
+        /// clip displacement — AppKit's key-transition reset, pane-resize
+        /// clamps, layout-rebuild collapses — must never change it; the
+        /// self-heal observer instead snaps the clip back to the bottom
+        /// whenever this is true and the view is displaced. Measuring
+        /// stickiness on the fly (the previous design) adopted every
+        /// involuntary displacement as if the user had scrolled there, which
+        /// froze panes mid-history and made becomeKey restore stale offsets.
+        private var followsBottom: Bool = true
 
         /// True while the user is actively dragging the scroll thumb or
         /// using a trackpad scroll. Suppresses auto-scroll-to-bottom so a
@@ -162,13 +188,6 @@ struct StoryTextView: NSViewRepresentable {
             highlights: [Highlight]
         ) {
             guard let textView, let storage = textView.textStorage else { return }
-            // Snapshot the current scroll position so the
-            // window-becomeKey observer has a recent value to restore
-            // if AppKit reset the clip view during a Cmd-Tab cycle.
-            if let sv = scrollView {
-                lastKnownScrollY = sv.contentView.bounds.origin.y
-                wasAtBottomAtLastObserve = isAtBottom
-            }
             let started = CFAbsoluteTimeGetCurrent()
             // Pre-reconcile scroll snapshot, captured before our mutations.
             let preState = captureScrollState()
@@ -188,7 +207,11 @@ struct StoryTextView: NSViewRepresentable {
             // `revision` keeps climbing by the number of appends per batch.
             let newSinceApplied = revision - appliedRevision
 
-            let wasAtBottom = isAtBottom
+            // Revision went backwards — reconnect / new session. Any
+            // scrolled-up position belongs to the old content; re-arm
+            // bottom-following for the fresh feed.
+            if newSinceApplied < 0 { followsBottom = true }
+
             var newLines = 0
             var didStructuralRebuild = false
             var didFrontTrim = false
@@ -252,7 +275,7 @@ struct StoryTextView: NSViewRepresentable {
                         lineCount: safeExtra,
                         storage: storage,
                         textView: textView,
-                        preserveVisibleScroll: !wasAtBottom
+                        preserveVisibleScroll: !followsBottom
                     )
                     appliedLineCount -= safeExtra
                     didFrontTrim = true
@@ -266,7 +289,7 @@ struct StoryTextView: NSViewRepresentable {
                     lineCount: safeDropped,
                     storage: storage,
                     textView: textView,
-                    preserveVisibleScroll: !wasAtBottom
+                    preserveVisibleScroll: !followsBottom
                 )
                 appliedLineCount = lines.count
                 didFrontTrim = true
@@ -298,16 +321,8 @@ struct StoryTextView: NSViewRepresentable {
             let userScrolledRecently = userScrolling
                 || Date().timeIntervalSince(lastUserScrollEndedAt) < 0.4
 
-            if wasAtBottom && !userScrolledRecently, !scrollToBottomScheduled {
-                scrollToBottomScheduled = true
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.scrollToBottomScheduled = false
-                    self.scrollToBottom(
-                        mutationCompletedAt: nil,
-                        mutationLayout: nil
-                    )
-                }
+            if followsBottom && !userScrolledRecently {
+                scheduleScrollToBottom()
             }
 
             let elapsed = CFAbsoluteTimeGetCurrent() - started
@@ -391,6 +406,9 @@ struct StoryTextView: NSViewRepresentable {
                 let newY = max(0, clip.bounds.origin.y - removedHeight)
                 clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: newY))
                 scrollView?.reflectScrolledClipView(clip)
+                // The user's chosen position just moved with the content —
+                // keep the becomeKey restore anchored to the same lines.
+                lastKnownScrollY = newY
             }
 
             return trimMs
@@ -482,6 +500,88 @@ struct StoryTextView: NSViewRepresentable {
             }
             scrollObservers.removeAll()
 
+            // Clip bounds observer with two jobs:
+            //  1. Classify user scrolls that post no live-scroll
+            //     notifications (scroller thumb/track clicks, selection-drag
+            //     autoscroll): origin moved, size unchanged, mouse down →
+            //     update the follow-bottom intent from where the user landed.
+            //  2. Self-heal: while following the bottom, ANY other
+            //     displacement that leaves a real gap (AppKit key-transition
+            //     reset, pane-resize clamp, layout collapse) gets snapped
+            //     back. The snap re-checks intent when it fires, so a wheel
+            //     scroll that lands mid-event (stale state during super's
+            //     synchronous bounds change) never fights the user.
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            scrollObservers.append(NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let sv = self.scrollView, let doc = sv.documentView else { return }
+                    let bounds = sv.contentView.bounds
+                    let y = bounds.origin.y
+                    let delta = y - self.lastObservedClipY
+                    let sizeChanged = bounds.size != self.lastObservedClipSize
+                    self.lastObservedClipY = y
+                    self.lastObservedClipSize = bounds.size
+                    // A live gesture is in progress — didEndLiveScroll (or the
+                    // wheel hook) settles the state when it finishes.
+                    guard !self.userScrolling else { return }
+                    if delta != 0, !sizeChanged, NSEvent.pressedMouseButtons != 0 {
+                        // Scroller interaction / selection-drag autoscroll.
+                        self.lastKnownScrollY = y
+                        self.followsBottom = self.isAtBottom
+                        self.lastUserScrollEndedAt = self.followsBottom ? .distantPast : Date()
+                        return
+                    }
+                    let gapToBottom = doc.frame.height - (y + bounds.height)
+                    guard gapToBottom > self.bottomThreshold else { return }
+                    if self.followsBottom {
+                        // DIAG(scroll-to-top): keep logging big involuntary
+                        // jumps so the trigger stays visible in the logs even
+                        // though we now recover from it.
+                        if abs(delta) > 300 {
+                            appLog("StoryTextView",
+                                   "clip jumped[\(self.label)] while following (self-healing):"
+                                   + " y=\(Int(y)) delta=\(Int(delta))"
+                                   + " docH=\(Int(doc.frame.height)) gapBottom=\(Int(gapToBottom))"
+                                   + " key=\(sv.window?.isKeyWindow == true)", level: .info)
+                        }
+                        self.scheduleScrollToBottom()
+                    } else if abs(delta) > 300 {
+                        appLog("StoryTextView",
+                               "clip jumped[\(self.label)] (no user scroll): y=\(Int(y)) delta=\(Int(delta))"
+                               + " docH=\(Int(doc.frame.height)) gapBottom=\(Int(gapToBottom))"
+                               + " key=\(sv.window?.isKeyWindow == true)"
+                               + " follows=\(self.followsBottom)", level: .info)
+                    }
+                }
+            })
+
+            // Document-frame observer: TextKit 1 lays out lazily, so the text
+            // view's frame can keep growing after a reconcile (or collapse
+            // during a structural rebuild) with no clip-bounds change at all.
+            // While following the bottom, re-pin whenever growth opens a gap.
+            if let doc = scrollView.documentView {
+                doc.postsFrameChangedNotifications = true
+                scrollObservers.append(NotificationCenter.default.addObserver(
+                    forName: NSView.frameDidChangeNotification,
+                    object: doc,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let sv = self.scrollView, let doc = sv.documentView else { return }
+                        guard self.followsBottom, !self.userScrolling else { return }
+                        let clip = sv.contentView.bounds
+                        let gap = doc.frame.height - (clip.origin.y + clip.height)
+                        if gap > self.bottomThreshold {
+                            self.scheduleScrollToBottom()
+                        }
+                    }
+                })
+            }
+
             scrollObservers.append(NotificationCenter.default.addObserver(
                 forName: NSScrollView.willStartLiveScrollNotification,
                 object: scrollView,
@@ -500,12 +600,12 @@ struct StoryTextView: NSViewRepresentable {
                     // Snapshot the scroll position the user settled on,
                     // so Cmd-Tab restore has a fresh reference point.
                     self.lastKnownScrollY = scrollView.contentView.bounds.origin.y
-                    self.wasAtBottomAtLastObserve = self.isAtBottom
+                    self.followsBottom = self.isAtBottom
                     // If the user released *at* the bottom, treat that as a
                     // deliberate "follow again" gesture: skip the grace
                     // window so the next reconcile auto-scrolls, and snap
                     // now in case lines arrived during the drag.
-                    if self.isAtBottom {
+                    if self.followsBottom {
                         self.lastUserScrollEndedAt = .distantPast
                         self.scrollToBottom()
                     } else {
@@ -539,16 +639,65 @@ struct StoryTextView: NSViewRepresentable {
                     // pass — otherwise our scroll() gets clobbered.
                     DispatchQueue.main.async { [weak self] in
                         guard let self, let sv = self.scrollView else { return }
-                        if self.wasAtBottomAtLastObserve {
+                        let yBefore = sv.contentView.bounds.origin.y
+                        if self.followsBottom {
                             self.scrollToBottom()
                         } else if let y = self.lastKnownScrollY,
                                   abs(sv.contentView.bounds.origin.y - y) > 1 {
                             sv.contentView.scroll(to: NSPoint(x: 0, y: y))
                             sv.reflectScrolledClipView(sv.contentView)
                         }
+                        // DIAG(scroll-to-top): record what the key-restore did.
+                        let docH = sv.documentView?.frame.height ?? 0
+                        appLog("StoryTextView",
+                               "becomeKey restore[\(self.label)]: follows=\(self.followsBottom)"
+                               + " lastY=\(self.lastKnownScrollY.map { Int($0) } ?? -1)"
+                               + " yBefore=\(Int(yBefore)) yAfter=\(Int(sv.contentView.bounds.origin.y))"
+                               + " docH=\(Int(docH))", level: .info)
+                        // A late AppKit layout pass can still yank us to the top
+                        // after we restore — re-check once it settles.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                            guard let self, let sv = self.scrollView else { return }
+                            let y2 = sv.contentView.bounds.origin.y
+                            let docH2 = sv.documentView?.frame.height ?? 0
+                            if y2 < 100, docH2 > 1000 {
+                                appLog("StoryTextView",
+                                       "becomeKey POST-SETTLE[\(self.label)] at top: y=\(Int(y2)) docH=\(Int(docH2))"
+                                       + " follows=\(self.followsBottom)", level: .info)
+                            }
+                        }
                     }
                 }
             })
+        }
+
+        /// Called by `PaneScrollView` after every wheel/trackpad scroll event
+        /// (including momentum ticks). Legacy mouse wheels post no
+        /// live-scroll notifications, so this is the only hook that sees
+        /// them. Mirrors the didEndLiveScroll handler: landing at the bottom
+        /// re-arms following immediately; anywhere else starts the grace
+        /// window that keeps auto-scroll from yanking the user.
+        func noteUserScrolled() {
+            guard let sv = scrollView else { return }
+            lastKnownScrollY = sv.contentView.bounds.origin.y
+            followsBottom = isAtBottom
+            lastUserScrollEndedAt = followsBottom ? .distantPast : Date()
+        }
+
+        /// Coalesced scroll-to-bottom hop. Intent is re-checked when the hop
+        /// fires, not just when it's scheduled: the self-heal observer can
+        /// schedule a snap from a bounds change that happens synchronously
+        /// inside a wheel event (before `noteUserScrolled` updates the
+        /// state), and that snap must not fight the user's scroll.
+        private func scheduleScrollToBottom() {
+            guard !scrollToBottomScheduled else { return }
+            scrollToBottomScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.scrollToBottomScheduled = false
+                guard self.followsBottom, !self.userScrolling else { return }
+                self.scrollToBottom()
+            }
         }
 
         /// Plain entry point (no diagnostic context) — used by the
@@ -598,6 +747,21 @@ struct StoryTextView: NSViewRepresentable {
             onLinkClick?(url)
             return true
         }
+    }
+}
+
+/// Scroll view for story/stream panes. Reports every wheel/trackpad scroll
+/// event to the coordinator *after* AppKit has applied it, so the
+/// follow-bottom intent can be updated from where the user actually landed.
+/// Needed because legacy mouse wheels never post
+/// `will/didEndLiveScrollNotification` — without this hook, wheel scrolls
+/// were invisible to the coordinator and its intent state went stale.
+final class PaneScrollView: NSScrollView {
+    var onUserScrollEvent: (@MainActor () -> Void)?
+
+    override func scrollWheel(with event: NSEvent) {
+        super.scrollWheel(with: event)
+        onUserScrollEvent?()
     }
 }
 
