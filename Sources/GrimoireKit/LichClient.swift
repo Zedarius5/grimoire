@@ -295,11 +295,33 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
             return
         }
         current.append(line)
-        if current.count > 5_000 {
-            current.removeFirst(current.count - 5_000)
+        let overflow = Self.capOverflow(count: current.count, cap: Self.mainLineCap)
+        if overflow > 0 {
+            current.removeFirst(overflow)
         }
         linesByStream["main"] = current
         streamRevisions["main", default: 0] += 1
+    }
+
+    // MARK: - Scrollback caps
+
+    /// Deep scrollback for the story feed; side streams (thoughts, familiar,
+    /// …) are short-form and get a much smaller cap in the batch path.
+    static let mainLineCap = 5_000
+
+    /// Hysteresis window before a trim fires: 10% of the cap.
+    static func capSlack(for cap: Int) -> Int { max(1, cap / 10) }
+
+    /// How many lines to drop from the front of a buffer, with hysteresis.
+    /// Trimming the front of an at-cap buffer forces the story view to
+    /// re-lay-out the ENTIRE document — TextKit lays text out sequentially,
+    /// so a front deletion invalidates everything after it (~150ms at 5000
+    /// lines). Trimming on every append pays that per batch and visibly
+    /// stalls the client; instead the buffer overshoots the cap by
+    /// `capSlack` appends and the whole overshoot trims in one chunk,
+    /// amortizing the relayout to once per slack-many lines.
+    static func capOverflow(count: Int, cap: Int) -> Int {
+        count > cap + capSlack(for: cap) ? count - cap : 0
     }
 
     // MARK: - Connection lifecycle (main thread)
@@ -554,9 +576,11 @@ public final class LichClient: ObservableObject, @unchecked Sendable {
             // streams (thoughts, familiar, etc.) are short-form and trigger
             // a full SwiftUI re-layout of their pane on every append, so
             // they get a much smaller cap to keep layout cost bounded.
-            let cap = streamId == "main" ? 5_000 : 500
-            if current.count > cap {
-                current.removeFirst(current.count - cap)
+            // Chunked (hysteresis) trim — see `capOverflow`.
+            let cap = streamId == "main" ? Self.mainLineCap : 500
+            let overflow = Self.capOverflow(count: current.count, cap: cap)
+            if overflow > 0 {
+                current.removeFirst(overflow)
             }
             newDict[streamId] = current
             // Bump revision by the number of appends *before* cap trimming.

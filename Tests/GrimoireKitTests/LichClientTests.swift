@@ -121,16 +121,37 @@ struct LichClientTests {
         #expect(client.isActive == false)
     }
 
-    @Test("mainLines caps at 5000")
-    func mainLinesCapAt5000() {
+    @Test("main scrollback overshoots the cap, then trims in one chunk")
+    func mainLineCapHysteresis() {
         let client = LichClient()
-        for i in 0..<5050 {
+        let cap = LichClient.mainLineCap
+        let slack = LichClient.capSlack(for: cap)
+
+        // Fill just past the cap: hysteresis means NO trim yet. A per-append
+        // trim here is the bug this guards against — deleting the front of an
+        // at-cap buffer forces the story view to re-lay-out the whole
+        // document (~150ms), so it must happen once per chunk, not per line.
+        for i in 0..<(cap + 1) {
             client.echoLocal("> line \(i)")
         }
-        // Cap is 5000; echoLocal trims if over. Verify we don't keep all
-        // 5050 (otherwise the cap is broken and memory grows unbounded).
-        #expect(client.mainLines.count <= 5000)
+        #expect(client.mainLines.count == cap + 1)
+
+        // One append past cap+slack: the whole overshoot trims at once,
+        // bounding memory at cap+slack and landing exactly back on the cap.
+        for i in 0..<slack {
+            client.echoLocal("> more \(i)")
+        }
+        #expect(client.mainLines.count == cap)
         // Newest line should still be present.
-        #expect(client.mainLines.last?.plainText == "> line 5049")
+        #expect(client.mainLines.last?.plainText == "> more \(slack - 1)")
+    }
+
+    @Test("cap overflow policy: slack window, then trim to cap")
+    func capOverflowPolicy() {
+        let cap = 500
+        let slack = LichClient.capSlack(for: cap)
+        #expect(LichClient.capOverflow(count: cap, cap: cap) == 0)
+        #expect(LichClient.capOverflow(count: cap + slack, cap: cap) == 0)
+        #expect(LichClient.capOverflow(count: cap + slack + 1, cap: cap) == slack + 1)
     }
 }
